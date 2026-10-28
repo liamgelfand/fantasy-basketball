@@ -1,0 +1,9 @@
+espn-api==1.0.1
+anthropic==2.3.0
+python-dotenv>=1.0
+fastapi==0.162.0
+uvicorn==0.54.0
+
+# dev / test
+pytest>=8
+httpx>=0.28

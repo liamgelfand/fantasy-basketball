@@ -1,0 +1,18 @@
+.root {
+  font-size: var(--mantine-font-size-sm);
+  overflow-wrap: anywhere;
+
+  & > :first-child {
+    margin-top: 0;
+  }
+
+  & > :last-child {
+    margin-bottom: 0;
+  }
+
+  & table {
+    display: block;
+    overflow-x: auto;
+    font-size: var(--mantine-font-size-xs);
+  }
+}

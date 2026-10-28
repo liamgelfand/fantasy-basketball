@@ -1,0 +1,21 @@
+.hero {
+  border: none;
+  background:
+    radial-gradient(circle at 100% 0%, var(--mantine-color-court-light) 0, transparent 55%),
+    radial-gradient(circle at 0% 100%, var(--mantine-color-indigo-light) 0, transparent 55%),
+    var(--mantine-color-body);
+  box-shadow: var(--mantine-shadow-sm);
+  outline: 1px solid var(--mantine-color-default-border);
+}
+
+.versus {
+  font-size: clamp(rem(24px), 3vw, rem(36px));
+  line-height: 1.15;
+}
+
+.vs {
+  color: var(--mantine-color-court-6);
+  font-style: italic;
+  font-weight: 800;
+  margin: 0 rem(4px);
+}

@@ -1,0 +1,18 @@
+.card {
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease;
+
+  @mixin hover {
+    transform: translateY(-2px);
+    box-shadow: var(--mantine-shadow-md);
+  }
+}
+
+.value {
+  font-family: var(--mantine-font-family-headings);
+  font-size: rem(30px);
+  font-weight: 800;
+  line-height: 1.15;
+  margin-top: rem(6px);
+}

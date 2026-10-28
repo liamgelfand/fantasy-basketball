@@ -1,0 +1,116 @@
+/* Full-height column: toolbar, scrolling thread, and a composer pinned to the bottom. */
+.page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.toolbar {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  flex-shrink: 0;
+}
+
+.messages {
+  flex: 1;
+  min-height: 0;
+}
+
+.thread {
+  max-width: rem(820px);
+  margin: 0 auto;
+  padding: var(--mantine-spacing-lg);
+  min-height: 100%;
+}
+
+.empty {
+  flex: 1;
+  min-height: rem(420px);
+}
+
+.wave {
+  animation: bounce 1.6s ease-in-out infinite;
+}
+
+@keyframes bounce {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-12px) rotate(25deg);
+  }
+}
+
+.suggestion {
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-lg);
+  background: var(--mantine-color-body);
+  text-align: left;
+  transition:
+    border-color 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--mantine-color-court-5);
+    transform: translateY(-1px);
+    box-shadow: var(--mantine-shadow-sm);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.userBubble {
+  max-width: min(80%, rem(620px));
+  padding: rem(10px) rem(14px);
+  border-radius: rem(18px) rem(18px) rem(4px) rem(18px);
+  background: linear-gradient(135deg, var(--mantine-color-court-6), var(--mantine-color-grape-6));
+  color: var(--mantine-color-white);
+}
+
+.assistant {
+  flex: 1;
+  min-width: 0;
+  padding-top: rem(4px);
+}
+
+.toolToggle {
+  border-radius: var(--mantine-radius-sm);
+}
+
+.toolList {
+  border-left: 2px solid var(--mantine-color-default-border);
+}
+
+.composerBar {
+  flex-shrink: 0;
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-lg) var(--mantine-spacing-md);
+  border-top: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-body);
+}
+
+.composer {
+  max-width: rem(820px);
+  margin: 0 auto;
+  border-radius: rem(24px);
+  padding-left: var(--mantine-spacing-md) !important;
+  transition: border-color 120ms ease;
+
+  &:focus-within {
+    border-color: var(--mantine-color-court-5);
+  }
+}
+
+.input {
+  flex: 1;
+
+  & textarea {
+    padding-top: rem(8px);
+    padding-bottom: rem(8px);
+  }
+}

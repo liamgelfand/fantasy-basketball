@@ -1,0 +1,17 @@
+.sortButton {
+  width: 100%;
+  white-space: nowrap;
+}
+
+.sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--mantine-color-body);
+  white-space: nowrap;
+}
+
+.highlight td {
+  background: var(--mantine-primary-color-light);
+  font-weight: 600;
+}

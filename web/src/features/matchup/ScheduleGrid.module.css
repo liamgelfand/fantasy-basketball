@@ -1,0 +1,49 @@
+.cell,
+.empty {
+  width: rem(34px);
+  height: rem(22px);
+  margin: 0 auto;
+  border-radius: rem(6px);
+}
+
+.cell {
+  transition: transform 120ms ease;
+
+  &:hover {
+    transform: scale(1.15);
+  }
+}
+
+.empty {
+  background: transparent;
+  border: 1px dashed var(--mantine-color-default-border);
+  opacity: 0.5;
+}
+
+.dot {
+  width: rem(12px);
+  height: rem(12px);
+  border-radius: rem(4px);
+}
+
+.starts {
+  background: var(--mantine-color-indigo-6);
+}
+
+.bench {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--mantine-color-court-2),
+    var(--mantine-color-court-2) 4px,
+    var(--mantine-color-court-1) 4px,
+    var(--mantine-color-court-1) 8px
+  );
+}
+
+.out {
+  background: var(--mantine-color-red-2);
+
+  @mixin dark {
+    background: var(--mantine-color-red-9);
+  }
+}
