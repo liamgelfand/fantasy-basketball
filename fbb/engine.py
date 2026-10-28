@@ -5,7 +5,14 @@ from dataclasses import asdict
 from functools import cached_property
 
 from .analysis import (
-    MatchupProjection, MoveResult, Valuer, category_weights, daily_starters, project_matchup, simulate, stat,
+    MatchupProjection,
+    MoveResult,
+    Valuer,
+    category_weights,
+    daily_starters,
+    project_matchup,
+    simulate,
+    stat,
 )
 from .espn import LeagueData, PlayerInfo, TeamInfo
 
@@ -16,6 +23,7 @@ class Engine:
     def __init__(self, data: LeagueData):
         self.data = data
         self.cfg = data.cfg
+        self._position_boards: dict[tuple[str, int], list[dict]] = {}
 
     # ---------- core pieces ----------
 
@@ -106,8 +114,23 @@ class Engine:
                 if fa.availability(None) > 0 or fa.expected_return]
 
     def free_agents_at(self, position: str, size: int = 40) -> list[dict]:
-        """Score a fresh pull of free agents at one position (beyond the cached top-N pool)."""
-        return [self.score_free_agent(fa) for fa in self.data.free_agents(size=size, position=position)]
+        """Score a fresh pull of free agents at one position (beyond the cached top-N pool).
+
+        Cached per (position, size) for the life of this snapshot: each pull is an ESPN request
+        plus a simulation per player.
+        """
+        key = (position, size)
+        if key not in self._position_boards:
+            self._position_boards[key] = [self.score_free_agent(fa)
+                                          for fa in self.data.free_agents(size=size, position=position)]
+        return self._position_boards[key]
+
+    def ownership_notes(self, adds: list[PlayerInfo]) -> list[str]:
+        """Flag "adds" that are on another fantasy roster: those are trade targets, not pickups."""
+        mine = self.data.my_team_id
+        taken = [f"{p.name} ({owner.name})" for p in adds
+                 if (owner := self.data.owner_of(p)) and owner.id != mine]
+        return [f"Already rostered elsewhere (trade target, not a pickup): {', '.join(taken)}"] if taken else []
 
     def matchup_gain(self, result: MoveResult) -> float:
         """Points leagues: projected fantasy points added. Category leagues: expected categories added."""
@@ -198,9 +221,8 @@ class Engine:
                 w: {k: round(float(v.get(k, 0) or 0), 3 if "%" in k else 1) for k in self.display_stats() + ["MIN", "GP"]}
                 for w, v in p.windows.items() if v
             }
-            out["upcoming_games"] = [
-                str(self.data.sp_date(sp)) for sp in sorted(p.game_days) if sp >= self.data.today_sp
-            ][:10]
+            ahead = set(self.data.rest_of_season_periods())  # excludes today once its games have tipped
+            out["upcoming_games"] = [str(self.data.sp_date(sp)) for sp in sorted(p.game_days & ahead)][:10]
         return out
 
     def team_summary(self, t: TeamInfo) -> dict:

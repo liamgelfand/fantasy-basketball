@@ -42,6 +42,15 @@ export function useTeamRoster(teamId: number | null) {
   })
 }
 
+export function usePlayer(id: number | null) {
+  const { params, key } = useSnapshotKey()
+  return useQuery({
+    queryKey: [...key, 'player', id],
+    queryFn: ({ signal }) => api.player(params, id!, signal),
+    enabled: id !== null,
+  })
+}
+
 export function useStandings() {
   const { params, key } = useSnapshotKey()
   return useQuery({ queryKey: [...key, 'standings'], queryFn: ({ signal }) => api.standings(params, signal) })

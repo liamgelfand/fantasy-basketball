@@ -48,10 +48,17 @@ export function probEmoji(p: number): string {
   return '🧊'
 }
 
+const ACRONYMS = new Set(['H2H', 'IR', 'FA', 'FAAB', 'ROTO'])
+
+/** ESPN enum strings (DAY_TO_DAY, H2H_POINTS) as readable labels, keeping known acronyms. */
 export function titleCase(s: string): string {
   return s
-    .toLowerCase()
     .split('_')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .map((w) => (ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
     .join(' ')
+}
+
+/** Stats where a lower number is better. */
+export function isReverseStat(stat: string, reverse: Iterable<string> = []): boolean {
+  return stat === 'TO' || new Set(reverse).has(stat)
 }

@@ -11,6 +11,7 @@ import { BrowserRouter } from 'react-router'
 import { ApiError } from './api/client'
 import { App } from './App'
 import { ChatProvider } from './features/chat/ChatProvider'
+import { PlayerDrawerProvider } from './features/player/PlayerDrawerProvider'
 import { SettingsProvider } from './state/settings'
 import { theme } from './theme'
 
@@ -32,9 +33,11 @@ createRoot(document.getElementById('root')!).render(
       <QueryClientProvider client={queryClient}>
         <SettingsProvider>
           <ChatProvider>
-            <BrowserRouter>
-              <App />
-            </BrowserRouter>
+            <PlayerDrawerProvider>
+              <BrowserRouter>
+                <App />
+              </BrowserRouter>
+            </PlayerDrawerProvider>
           </ChatProvider>
         </SettingsProvider>
       </QueryClientProvider>

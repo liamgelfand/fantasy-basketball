@@ -2,6 +2,7 @@ import { Box, Group, Paper, Table, Text, Title, Tooltip } from '@mantine/core'
 import type { CellState, Matchup } from '../../api/types'
 import { StatusBadge } from '../../components/StatusBadge'
 import { shortDate } from '../../lib/format'
+import { PlayerLink } from '../player/PlayerLink'
 import classes from './ScheduleGrid.module.css'
 
 const CELL: Record<CellState, { label: string; className: string }> = {
@@ -46,12 +47,12 @@ export function ScheduleGrid({ schedule }: { schedule: Matchup['schedule'] }) {
           </Table.Thead>
           <Table.Tbody>
             {schedule.rows.map((row) => (
-              <Table.Tr key={row.player}>
+              <Table.Tr key={row.player_id}>
                 <Table.Td>
                   <Group gap={6} wrap="nowrap">
-                    <Text size="sm" fw={500} style={{ whiteSpace: 'nowrap' }}>
-                      {row.player}
-                    </Text>
+                    <Box style={{ whiteSpace: 'nowrap' }}>
+                      <PlayerLink id={row.player_id}>{row.player}</PlayerLink>
+                    </Box>
                     <StatusBadge status={row.status} />
                   </Group>
                 </Table.Td>

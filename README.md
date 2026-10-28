@@ -31,7 +31,16 @@ python -m fbb serve            # http://localhost:8000  (API docs at /api/docs)
 ```
 
 Pages: Matchup, Roster, Free agents, Simulator, Trades, League, Ask Claude (chat), and Report.
+Click any player name for a card with every stat window, upcoming games, and ESPN news.
 ESPN data is cached for 10 minutes; use the refresh button in the header for the latest.
+
+Chats are saved (in your browser and in `.fbb/chats/`, gitignored), so they survive reloads and
+server restarts. A chat always answers from the data the pages show: change the stat window or
+refresh and the next answer uses the new snapshot, with the conversation intact. **Stop** cancels
+Claude on the server too, so an abandoned question doesn't keep spending tokens.
+
+The server only answers on `localhost`. To use it from your phone, run
+`python -m fbb serve --host 0.0.0.0` (there is no login, so only do this on a network you trust).
 
 ### Architecture
 
@@ -46,7 +55,7 @@ fbb/                 Python package (domain + API)
     routes/          thin HTTP handlers (league, players, moves, assistant)
     schemas.py       Pydantic request/response contract
     presenters.py    Engine -> schema mapping (pure)
-    services.py      snapshot cache per (stat window, punts), chat sessions
+    services.py      snapshot cache per (stat window, punts), chat sessions + on-disk store
     streaming.py     server-sent events for Claude tool progress
 web/                 React + TypeScript (Vite, Mantine UI, TanStack Query, React Router)
   src/api/           typed client, endpoints, query hooks (types mirror schemas.py)
@@ -61,7 +70,8 @@ python -m fbb serve --reload --no-browser   # API on :8000
 cd web; npm run dev                          # UI on :5173 with hot reload, proxies /api
 ```
 
-Checks: `python -m pytest` (backend), and in `web/`: `npm run typecheck`, `npm run lint`, `npm test`.
+Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest` for the backend;
+`npm run typecheck`, `npm run lint`, `npm test` in `web/`.
 
 ## Commands
 

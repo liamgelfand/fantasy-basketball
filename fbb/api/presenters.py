@@ -92,7 +92,7 @@ def _schedule(engine: Engine, roster: list[PlayerInfo]) -> s.ScheduleGrid:
             else:
                 cells.append("starts" if p.name in started[day.sp] else "bench")
         if any(cells):
-            rows.append(s.ScheduleRow(player=p.name, status=p.injury_status, cells=cells))
+            rows.append(s.ScheduleRow(player_id=p.id, player=p.name, status=p.injury_status, cells=cells))
     return s.ScheduleGrid(days=[day.date for day in plan], rows=rows)
 
 
@@ -149,6 +149,29 @@ def free_agents(engine: Engine, position: str | None, include_injured: bool) -> 
         ))
     rows.sort(key=lambda r: r.matchup_gain, reverse=True)
     return s.FreeAgentBoard(gain_label="Proj FPTS gain" if engine.data.is_points else "Exp cats gain", rows=rows)
+
+
+WINDOW_ORDER = ("season", "last_30", "last_15", "last_7", "projected", "blend")
+
+
+def player_detail(engine: Engine, p: PlayerInfo, news: list[dict], news_error: str | None) -> s.PlayerDetail:
+    d = engine.data
+    owner = d.owner_of(p)
+    shown = engine.display_stats() + [k for k in ("MIN",) if k not in engine.display_stats()]
+    windows = {w: {k: round(float(p.windows[w].get(k, 0) or 0), 3 if "%" in k else 1) for k in shown}
+               for w in WINDOW_ORDER if p.windows.get(w)}
+    ahead = set(d.rest_of_season_periods())  # excludes today once its games have tipped
+    upcoming = [day for sp in sorted(p.game_days & ahead) if (day := d.sp_date(sp))][:10]
+    return s.PlayerDetail(
+        **_player_fields(engine, p),
+        owner=owner.name if owner else None,
+        is_mine=bool(owner and owner.id == d.my_team_id),
+        expected_return=p.expected_return,
+        windows=windows,
+        upcoming_games=upcoming,
+        news=[s.NewsItem(**n) for n in news],
+        news_error=news_error,
+    )
 
 
 def team_roster(engine: Engine, team: TeamInfo) -> s.TeamRoster:

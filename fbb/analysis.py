@@ -8,8 +8,9 @@ from __future__ import annotations
 import datetime as dt
 import math
 import statistics
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, Protocol
+from typing import Protocol
 
 from .espn import Category, PlayerInfo, TeamInfo
 
@@ -353,7 +354,7 @@ def simulate(view: LeagueView, base: MatchupProjection, roster: list[PlayerInfo]
         expected_wins_after=round(after.expected_wins, 2),
         win_prob_before=round(base.win_matchup_prob, 3),
         win_prob_after=round(after.win_matchup_prob, 3),
-        category_deltas={a.stat: round(a.win_prob - b.win_prob, 3) for a, b in zip(after.categories, base.categories)},
+        category_deltas={a.stat: round(a.win_prob - b.win_prob, 3) for a, b in zip(after.categories, base.categories, strict=True)},
         games_delta=round(after.mine.remaining_games - base.mine.remaining_games, 2),
         season_value_delta=round(sum(valuer.total(p) for p in add) - sum(valuer.total(p) for p in drop), 2),
         projected_delta={c: round(after.mine.final[c] - base.mine.final[c], 3) for c in after.mine.final},

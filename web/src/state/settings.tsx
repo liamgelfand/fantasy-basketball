@@ -42,6 +42,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       params,
       setWindow: (window) => update({ window }),
       setPunts: (punts) => update({ punts: [...punts].sort() }),
+      reset: () => update({ window: null, punts: null }),
     }),
     [params, update],
   )

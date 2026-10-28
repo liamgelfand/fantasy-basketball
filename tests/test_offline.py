@@ -2,8 +2,8 @@
 import random
 
 import pytest
-
 from fakes import CATS, SLOTS, FakeData, make_player
+
 from fbb.analysis import Valuer, daily_starters, win_prob
 from fbb.engine import Engine
 from fbb.espn import Category

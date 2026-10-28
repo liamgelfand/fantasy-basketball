@@ -1,0 +1,36 @@
+.track {
+  position: relative;
+  flex: 1;
+  height: rem(18px);
+  border-radius: rem(4px);
+  background: var(--mantine-color-default-hover);
+}
+
+.axis {
+  position: absolute;
+  left: 50%;
+  top: rem(-2px);
+  bottom: rem(-2px);
+  width: 1px;
+  background: var(--mantine-color-default-border);
+}
+
+.bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: rem(4px);
+  transition: width 300ms ease;
+}
+
+.good {
+  background: var(--mantine-color-teal-6);
+}
+
+.bad {
+  background: var(--mantine-color-red-6);
+}
+
+.neutral {
+  background: var(--mantine-color-gray-4);
+}

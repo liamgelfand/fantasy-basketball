@@ -1,0 +1,14 @@
+.link {
+  font-weight: 600;
+  font-size: var(--mantine-font-size-sm);
+  text-align: left;
+  text-decoration-color: transparent;
+  text-underline-offset: rem(3px);
+  transition: text-decoration-color 120ms ease, color 120ms ease;
+
+  &:hover {
+    color: var(--mantine-primary-color-filled);
+    text-decoration: underline;
+    text-decoration-color: currentColor;
+  }
+}

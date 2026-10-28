@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ...report import build_report
 from .. import presenters, schemas
@@ -33,9 +34,9 @@ def standings(engine: EngineDep):
 
 
 @router.get("/activity", response_model=list[schemas.Activity])
-def activity(engine: EngineDep, limit: int = 25):
+def activity(engine: EngineDep, limit: Annotated[int, Query(ge=1, le=100)] = 25):
     try:
-        return engine.data.recent_activity(min(max(limit, 1), 100))
+        return engine.data.recent_activity(limit)
     except Exception as e:
         log.warning("Recent activity unavailable: %s", e)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "ESPN didn't return recent activity.") from e

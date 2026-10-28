@@ -1,6 +1,6 @@
 # fbb: project notes for Claude Code
 
-Python 3.11, venv at `.venv` (`.\.venv\Scripts\python`). Run `python -m pytest` after changes.
+Python 3.11, venv at `.venv` (`.\.venv\Scripts\python`). Run `ruff check .` and `python -m pytest` after changes.
 Web client in `web/` (Node 20+): run `npm run typecheck && npm run lint && npm test` there after UI changes.
 
 ## Layout
@@ -17,6 +17,7 @@ Web client in `web/` (Node 20+): run `npm run typecheck && npm run lint && npm t
 - New agent capabilities = a function in `FantasyAgent._build_tools` + a schema entry.
 - New UI data = Engine method -> presenter + schema -> route -> `types.ts` + query hook -> feature page.
 - Secrets live in `.env` (gitignored). Never print or log ESPN_S2/SWID/API keys.
+- Runtime data (saved chats) lives in `.fbb/` (gitignored).
 
 ## My league (fill in)
 - Scoring: (e.g. 9-cat H2H)

@@ -62,6 +62,7 @@ CellState = Literal["starts", "bench", "out"]
 
 
 class ScheduleRow(BaseModel):
+    player_id: int
     player: str
     status: str
     cells: list[CellState | None] = Field(description="One entry per day in ScheduleGrid.days; null = no game")
@@ -138,6 +139,22 @@ class FreeAgentRow(PlayerRow):
 class FreeAgentBoard(BaseModel):
     gain_label: str
     rows: list[FreeAgentRow]
+
+
+class NewsItem(BaseModel):
+    published: str
+    headline: str
+    story: str
+
+
+class PlayerDetail(PlayerRow):
+    owner: str | None = Field(description="Fantasy team that rosters the player; null for free agents")
+    is_mine: bool
+    expected_return: dt.date | None
+    windows: dict[str, dict[str, float]] = Field(description="Per-game stats by window (season, last_30, ...)")
+    upcoming_games: list[dt.date]
+    news: list[NewsItem]
+    news_error: str | None = None
 
 
 class TeamRoster(BaseModel):

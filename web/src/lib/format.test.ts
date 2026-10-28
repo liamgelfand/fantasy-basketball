@@ -1,4 +1,4 @@
-import { formatStat, pct, probColor, signed, titleCase } from './format'
+import { formatStat, isReverseStat, pct, probColor, signed, titleCase } from './format'
 
 describe('format', () => {
   it('formats ratio and counting stats', () => {
@@ -25,8 +25,15 @@ describe('format', () => {
     expect(probColor(0.1)).toBe('red')
   })
 
+  it('knows which stats are better when lower', () => {
+    expect(isReverseStat('TO')).toBe(true)
+    expect(isReverseStat('PF', ['PF'])).toBe(true)
+    expect(isReverseStat('PTS')).toBe(false)
+  })
+
   it('title-cases enum strings', () => {
-    expect(titleCase('H2H_CATEGORY')).toBe('H2h Category')
+    expect(titleCase('H2H_CATEGORY')).toBe('H2H Category')
+    expect(titleCase('H2H_POINTS')).toBe('H2H Points')
     expect(titleCase('DAY_TO_DAY')).toBe('Day To Day')
   })
 })

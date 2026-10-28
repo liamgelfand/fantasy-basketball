@@ -34,7 +34,13 @@ def simulate(body: schemas.SimulationRequest, engine: EngineDep):
         raise HTTPException(status.HTTP_409_CONFLICT, "No active matchup to simulate against.")
     drops = _from_roster(engine.data.my_team, body.drop)
     adds = _lookup(engine, body.add)
-    return presenters.move_result(engine, engine.simulate(adds, drops))
+    mine = {p.id for p in engine.data.my_team.roster}
+    already = [p.name for p in adds if p.id in mine]
+    if already:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Already on your roster: {', '.join(already)}")
+    result = presenters.move_result(engine, engine.simulate(adds, drops))
+    result.notes += engine.ownership_notes(adds)
+    return result
 
 
 @router.post("/trades/evaluate", response_model=schemas.TradeResult)

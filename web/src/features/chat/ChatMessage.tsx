@@ -1,4 +1,4 @@
-import { Avatar, Box, Collapse, Group, Loader, Stack, Text, UnstyledButton } from '@mantine/core'
+import { Avatar, Box, Collapse, Divider, Group, Loader, Stack, Text, UnstyledButton } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { IconChevronDown, IconChevronRight, IconDatabaseSearch } from '@tabler/icons-react'
 import { Markdown } from '../../components/Markdown'
@@ -6,6 +6,18 @@ import classes from './Chat.module.css'
 import type { ChatTurn } from './useChat'
 
 export function ChatMessage({ turn }: { turn: ChatTurn }) {
+  if (turn.role === 'notice') {
+    return (
+      <Divider
+        label={
+          <Text size="xs" c="dimmed">
+            {turn.text}
+          </Text>
+        }
+        labelPosition="center"
+      />
+    )
+  }
   if (turn.role === 'user') {
     return (
       <Group justify="flex-end">

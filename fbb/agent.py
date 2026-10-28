@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import threading
+from collections.abc import Callable
 from dataclasses import asdict
-from typing import Callable
 
 import anthropic
 
@@ -115,10 +116,8 @@ class FantasyAgent:
             bad = [p.name for p in drops if p.id not in mine]
             if bad:
                 return {"error": f"Not on your roster: {bad}"}
-            taken = [f"{p.name} ({d.owner_of(p).name})" for p in adds if d.owner_of(p)]
             result = asdict(e.simulate(adds, drops))
-            if taken:
-                result["notes"].append(f"Already rostered elsewhere (trade target, not a pickup): {taken}")
+            result["notes"] += e.ownership_notes(adds)
             return result
 
         def evaluate_trade(give: list[str], receive: list[str]):
@@ -173,12 +172,32 @@ class FantasyAgent:
         except Exception as ex:  # report tool failures to Claude instead of crashing the loop
             return f"Tool {name} failed: {type(ex).__name__}: {ex}", True
 
+    # ---------- history ----------
+
+    def export_messages(self) -> list[dict]:
+        """History as plain JSON-able dicts. Content blocks keep the exact fields the API sent,
+        so thinking blocks replay unchanged after a reload."""
+        def block(b):
+            return b.model_dump(mode="json", exclude_unset=True) if hasattr(b, "model_dump") else b
+        return [{"role": m["role"], "content": m["content"] if isinstance(m["content"], str)
+                 else [block(b) for b in m["content"]]} for m in self.messages]
+
+    def import_messages(self, messages: list[dict]) -> None:
+        self.messages = list(messages)
+
     # ---------- loop ----------
 
-    def ask(self, question: str, on_tool: Callable[[str, dict], None] | None = None, max_turns: int = 25) -> str:
-        """Send one user message, run tools until Claude answers, and keep the history for follow-ups."""
+    def ask(self, question: str, on_tool: Callable[[str, dict], None] | None = None, max_turns: int = 25,
+            cancel: threading.Event | None = None) -> str:
+        """Send one user message, run tools until Claude answers, and keep the history for follow-ups.
+
+        `cancel` is checked before each API round. The history stays valid when it trips: it only
+        ever ends on a user turn (the question or a full set of tool results), never mid tool call.
+        """
         self.messages.append({"role": "user", "content": question})
         for _ in range(max_turns):
+            if cancel is not None and cancel.is_set():
+                return "Stopped."
             response = self.client.beta.messages.create(
                 model=self.cfg.model,
                 max_tokens=16000,

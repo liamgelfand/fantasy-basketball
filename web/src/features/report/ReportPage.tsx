@@ -14,11 +14,32 @@ type PlanState =
   | { status: 'done'; text: string }
   | { status: 'error'; message: string }
 
+const PLAN_KEY = 'fantasy-hq:game-plan'
+
+// The last finished plan is kept for this browser tab, so leaving the page doesn't discard it.
+function loadPlan(): PlanState {
+  try {
+    const text = sessionStorage.getItem(PLAN_KEY)
+    if (text) return { status: 'done', text }
+  } catch {
+    /* storage blocked */
+  }
+  return { status: 'idle' }
+}
+
+function savePlan(text: string) {
+  try {
+    sessionStorage.setItem(PLAN_KEY, text)
+  } catch {
+    /* non-essential */
+  }
+}
+
 export function ReportPage() {
   const report = useReport()
   const meta = useMeta()
   const { params } = useSettings()
-  const [plan, setPlan] = useState<PlanState>({ status: 'idle' })
+  const [plan, setPlan] = useState<PlanState>(loadPlan)
   const abort = useRef<AbortController | null>(null)
 
   const runPlan = async () => {
@@ -30,16 +51,22 @@ export function ReportPage() {
         (e) => {
           if (e.event === 'tool')
             setPlan((p) => (p.status === 'running' ? { ...p, tools: [...p.tools, e.data.label] } : p))
-          else if (e.event === 'answer') setPlan({ status: 'done', text: e.data.text })
+          else if (e.event === 'answer') {
+            savePlan(e.data.text)
+            setPlan({ status: 'done', text: e.data.text })
+          }
           else setPlan({ status: 'error', message: e.data.message })
         },
         abort.current.signal,
       )
     } catch (err) {
-      if (!(err instanceof DOMException && err.name === 'AbortError'))
-        setPlan({ status: 'error', message: err instanceof Error ? err.message : String(err) })
+      if (err instanceof DOMException && err.name === 'AbortError') setPlan(loadPlan())
+      else setPlan({ status: 'error', message: err instanceof Error ? err.message : String(err) })
     }
   }
+
+  // Closing the stream makes the server stop Claude before its next API call.
+  const stopPlan = () => abort.current?.abort()
 
   return (
     <Stack gap="lg">
@@ -63,9 +90,14 @@ export function ReportPage() {
 
       {plan.status === 'running' && (
         <Paper>
-          <Group gap="sm">
-            <Loader size="sm" type="dots" />
-            <Text fw={600}>Claude is building your game plan…</Text>
+          <Group justify="space-between">
+            <Group gap="sm">
+              <Loader size="sm" type="dots" />
+              <Text fw={600}>Claude is building your game plan… this can take a few minutes</Text>
+            </Group>
+            <Button size="xs" variant="default" onClick={stopPlan}>
+              Stop
+            </Button>
           </Group>
           {plan.tools.length > 0 && (
             <Text size="xs" c="dimmed" mt="xs">

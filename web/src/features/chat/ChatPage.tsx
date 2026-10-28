@@ -11,8 +11,9 @@ const SUGGESTIONS = [
   { emoji: '🛒', text: 'Who should I pick up this week and who do I drop?' },
   { emoji: '🩹', text: 'Any injury news I should act on?' },
   { emoji: '🤝', text: 'Find me a trade that fixes my weakest spot.' },
-  { emoji: '📈', text: 'Which categories should I chase or concede this week?' },
 ]
+const CATEGORY_SUGGESTION = { emoji: '📈', text: 'Which categories should I chase or concede this week?' }
+const POINTS_SUGGESTION = { emoji: '📅', text: 'Where can I squeeze in extra starts this week?' }
 
 export function ChatPage() {
   const meta = useMeta()
@@ -26,6 +27,7 @@ export function ChatPage() {
   }, [turns.length, last?.tools.length, last?.text])
 
   const disabled = meta.data ? !meta.data.chat_enabled : true
+  const suggestions = [...SUGGESTIONS, meta.data?.is_points ? POINTS_SUGGESTION : CATEGORY_SUGGESTION]
 
   return (
     <div className={classes.page}>
@@ -68,7 +70,7 @@ export function ChatPage() {
                   Ask anything about your team. Claude pulls rosters, projections, free agents and news before answering.
                 </Text>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} w="100%">
-                  {SUGGESTIONS.map((s) => (
+                  {suggestions.map((s) => (
                     <UnstyledButton
                       key={s.text}
                       className={classes.suggestion}

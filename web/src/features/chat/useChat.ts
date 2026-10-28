@@ -2,7 +2,8 @@ import { createContext, useContext } from 'react'
 
 export interface ChatTurn {
   id: number
-  role: 'user' | 'assistant'
+  /** `notice` is an app message in the thread (e.g. "context was reset"), not from either party. */
+  role: 'user' | 'assistant' | 'notice'
   text: string
   tools: string[]
   status: 'pending' | 'done' | 'error'

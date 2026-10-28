@@ -75,6 +75,12 @@ class FakeData:
     def find_player(self, name):
         return next((p for p in self.rostered_players + self._fas if p.name.lower() == name.lower()), None)
 
+    def player_by_id(self, player_id):
+        return next((p for p in self.rostered_players + self._fas if p.id == player_id), None)
+
+    def player_news(self, p, limit=5):
+        return [{"published": "2026-10-26T18:00:00Z", "headline": f"{p.name} cleared to play", "story": "Good news."}]
+
     def find_team(self, q):
         return next((t for t in self.teams.values() if t.name.lower() == q.lower()), None)
 

@@ -99,6 +99,7 @@ def cmd_json(args) -> None:
 
 
 def cmd_serve(args) -> None:
+    import os
     import threading
     import webbrowser
 
@@ -106,7 +107,13 @@ def cmd_serve(args) -> None:
 
     from .api.app import WEB_DIST
 
-    url = f"http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}"
+    local = args.host in ("127.0.0.1", "localhost", "::1")
+    if not local and "FBB_ALLOWED_HOSTS" not in os.environ:
+        # You chose to expose the server on your network (e.g. to use it from your phone).
+        os.environ["FBB_ALLOWED_HOSTS"] = "*"
+        print("Warning: the API has no login. Anyone on your network can use it (and your Claude key).",
+              file=sys.stderr)
+    url = f"http://{'localhost' if local or args.host == '0.0.0.0' else args.host}:{args.port}"
     if not (WEB_DIST / "index.html").is_file():
         print("Web client not built yet: run `npm install && npm run build` in web/ (API still available).",
               file=sys.stderr)

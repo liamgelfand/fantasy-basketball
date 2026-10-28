@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   AppShell,
   Avatar,
   Badge,
@@ -19,11 +20,14 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { IconMoon, IconRefresh, IconSun } from '@tabler/icons-react'
+import { IconMoon, IconPlugConnectedX, IconRefresh, IconSun } from '@tabler/icons-react'
+import { useEffect } from 'react'
 import { NavLink as RouterLink, Outlet, useLocation } from 'react-router'
+import { ApiError } from '../api/client'
 import { useMeta, useRefresh } from '../api/queries'
 import { titleCase } from '../lib/format'
 import { NAV } from '../nav'
+import { useSettings } from '../state/useSettings'
 import classes from './AppLayout.module.css'
 import { SettingsPanel } from './SettingsPanel'
 
@@ -35,6 +39,14 @@ export function AppLayout() {
   const { setColorScheme } = useMantineColorScheme()
   const scheme = useComputedColorScheme('light')
   const isChat = location.pathname === '/chat'
+  const { params, reset } = useSettings()
+
+  // Settings saved in this browser can go stale (e.g. a window the server no longer accepts):
+  // fall back to the server defaults instead of failing every page.
+  const staleSettings = meta.error instanceof ApiError && meta.error.status === 422
+  useEffect(() => {
+    if (staleSettings && (params.window !== null || params.punts !== null)) reset()
+  }, [staleSettings, params, reset])
 
   const onRefresh = () =>
     refresh.mutate(undefined, {
@@ -146,6 +158,21 @@ export function AppLayout() {
       </AppShell.Navbar>
 
       <AppShell.Main className={isChat ? classes.mainChat : undefined}>
+        {meta.isError && !staleSettings && (
+          <Alert
+            color="red"
+            variant="light"
+            icon={<IconPlugConnectedX />}
+            title="Can't reach your league"
+            mb={isChat ? 0 : 'lg'}
+            m={isChat ? 'md' : undefined}
+          >
+            <Text size="sm">{meta.error.message}</Text>
+            <Text size="xs" c="dimmed" mt={4}>
+              If ESPN returns 401, your espn_s2 / SWID cookies expired: copy fresh ones into .env and restart.
+            </Text>
+          </Alert>
+        )}
         {isChat ? (
           <Outlet />
         ) : (

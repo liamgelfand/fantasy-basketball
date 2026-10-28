@@ -6,6 +6,8 @@ export interface SettingsContextValue {
   params: SnapshotParams
   setWindow: (window: string) => void
   setPunts: (punts: string[]) => void
+  /** Back to the server's .env defaults. */
+  reset: () => void
 }
 
 export const SettingsContext = createContext<SettingsContextValue | null>(null)

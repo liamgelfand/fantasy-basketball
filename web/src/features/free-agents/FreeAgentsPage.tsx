@@ -9,6 +9,7 @@ import { PageHeader } from '../../components/PageHeader'
 import { nameColumn, numberColumn, valueColumn } from '../../components/playerColumns'
 import { QueryState } from '../../components/QueryState'
 import { StatusBadge } from '../../components/StatusBadge'
+import { PlayerLink } from '../player/PlayerLink'
 import { pct, signed } from '../../lib/format'
 
 const POSITIONS = ['All', 'PG', 'SG', 'SF', 'PF', 'C', 'G', 'F'] as const
@@ -100,11 +101,12 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
   }
 
   const top = board.rows.slice(0, 3)
+  // Points carry the row index so the tooltip can name the player (series data must be numeric).
   const scatter = [
     {
       name: 'Free agents',
       color: 'court.6',
-      data: board.rows.map((r) => ({ value: r.value, gain: r.matchup_gain })),
+      data: board.rows.map((r, i) => ({ value: r.value, gain: r.matchup_gain, row: i })),
     },
   ]
 
@@ -122,7 +124,9 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
               </Badge>
             </Group>
             <Group gap={6}>
-              <Title order={4}>{r.name}</Title>
+              <Title order={4}>
+                <PlayerLink id={r.id}>{r.name}</PlayerLink>
+              </Title>
               <StatusBadge status={r.status} />
             </Group>
             <Text size="sm" c="dimmed">
@@ -156,6 +160,13 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
           labels={{ x: 'Season value (z)', y: board.gain_label }}
           valueFormatter={{ x: (v) => v.toFixed(1), y: (v) => v.toFixed(isPoints ? 1 : 2) }}
           referenceLines={[{ y: 0, color: 'gray.5' }]}
+          tooltipProps={{
+            content: ({ payload }) => {
+              const point = payload?.[0]?.payload as { row?: number } | undefined
+              const r = point?.row === undefined ? undefined : board.rows[point.row]
+              return r ? <ScatterTip row={r} gainLabel={board.gain_label} isPoints={isPoints} /> : null
+            },
+          }}
         />
       </Paper>
 
@@ -176,5 +187,22 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
         </Text>
       )}
     </Stack>
+  )
+}
+
+function ScatterTip({ row, gainLabel, isPoints }: { row: FreeAgentRow; gainLabel: string; isPoints: boolean }) {
+  return (
+    <Paper p="xs" shadow="md" withBorder radius="md">
+      <Text fw={700} size="sm">
+        {row.name}
+      </Text>
+      <Text size="xs" c="dimmed">
+        {row.pro_team} · {row.positions.join('/')} · {row.games_left} games left
+      </Text>
+      <Text size="xs" mt={4}>
+        {gainLabel}: <b>{signed(row.matchup_gain, isPoints ? 1 : 2)}</b> · Season value: <b>{signed(row.value)}</b>
+      </Text>
+      <Text size="xs">{row.best_drop ? `Best drop: ${row.best_drop}` : 'Uses your open spot'}</Text>
+    </Paper>
   )
 }

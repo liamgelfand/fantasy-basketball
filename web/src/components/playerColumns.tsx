@@ -1,5 +1,6 @@
 import { Badge, Group, Text } from '@mantine/core'
 import type { PlayerRow } from '../api/types'
+import { PlayerLink } from '../features/player/PlayerLink'
 import { formatStat, signed } from '../lib/format'
 import type { Column } from './DataTable'
 import { StatusBadge } from './StatusBadge'
@@ -13,9 +14,7 @@ export function nameColumn<T extends PlayerRow>(): Column<T> {
     render: (p) => (
       <Group gap={6} wrap="nowrap">
         <div>
-          <Text size="sm" fw={600}>
-            {p.name}
-          </Text>
+          <PlayerLink id={p.id}>{p.name}</PlayerLink>
           <Text size="xs" c="dimmed">
             {p.pro_team} · {p.positions.join('/') || '—'}
           </Text>

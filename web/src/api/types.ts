@@ -52,6 +52,7 @@ export interface StartsDay {
 export type CellState = 'starts' | 'bench' | 'out'
 
 export interface ScheduleRow {
+  player_id: number
   player: string
   status: string
   cells: (CellState | null)[]
@@ -114,6 +115,22 @@ export interface FreeAgentRow extends PlayerRow {
 export interface FreeAgentBoard {
   gain_label: string
   rows: FreeAgentRow[]
+}
+
+export interface NewsItem {
+  published: string
+  headline: string
+  story: string
+}
+
+export interface PlayerDetail extends PlayerRow {
+  owner: string | null
+  is_mine: boolean
+  expected_return: string | null
+  windows: Record<string, Record<string, number>>
+  upcoming_games: string[]
+  news: NewsItem[]
+  news_error: string | null
 }
 
 export interface TeamRoster {

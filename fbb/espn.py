@@ -350,6 +350,17 @@ class LeagueData:
             self._player_cache[player_id] = self.to_player(card)
         return self._player_cache[player_id]
 
+    def player_by_id(self, player_id: int) -> PlayerInfo | None:
+        """Rosters, scored free agents, and players already looked up; else ESPN's player card."""
+        for p in self.rostered_players + (self._fa_cache or []) + list(self._player_cache.values()):
+            if p.id == player_id:
+                return p
+        card = self.league.player_info(playerId=player_id)
+        if card is None:
+            return None
+        self._player_cache[player_id] = self.to_player(card)
+        return self._player_cache[player_id]
+
     def owner_of(self, player: PlayerInfo) -> TeamInfo | None:
         for t in self.teams.values():
             if any(p.id == player.id for p in t.roster):

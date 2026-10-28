@@ -3,6 +3,9 @@ import { IconArrowUp, IconPlayerStopFilled } from '@tabler/icons-react'
 import { useState, type KeyboardEvent } from 'react'
 import classes from './Chat.module.css'
 
+// Matches the server's ChatMessage limit.
+const MAX_LENGTH = 4000
+
 interface Props {
   onSend: (text: string) => void
   onStop: () => void
@@ -41,13 +44,14 @@ export function ChatComposer({ onSend, onStop, busy, disabled }: Props) {
             autosize
             minRows={1}
             maxRows={8}
+            maxLength={MAX_LENGTH}
             variant="unstyled"
             disabled={disabled}
             className={classes.input}
             autoFocus
           />
           {busy ? (
-            <Tooltip label="Stop waiting">
+            <Tooltip label="Stop Claude">
               <ActionIcon size={38} radius="xl" variant="filled" color="gray" onClick={onStop} aria-label="Stop">
                 <IconPlayerStopFilled size={16} />
               </ActionIcon>

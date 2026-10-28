@@ -1,12 +1,12 @@
-import { BarChart } from '@mantine/charts'
 import { Alert, Button, Group, MultiSelect, Paper, Select, SimpleGrid, Stack, Text, Title } from '@mantine/core'
 import { IconArrowsExchange, IconCalendarStats, IconTarget, IconTrendingUp } from '@tabler/icons-react'
 import { useState } from 'react'
 import { useEvaluateTrade, useMeta, useRoster, useTeamRoster } from '../../api/queries'
 import type { TradeResult } from '../../api/types'
+import { DeltaBars } from '../../components/DeltaBars'
 import { PageHeader } from '../../components/PageHeader'
 import { StatCard } from '../../components/StatCard'
-import { signed } from '../../lib/format'
+import { isRatio, signed } from '../../lib/format'
 
 export function TradesPage() {
   const meta = useMeta()
@@ -74,13 +74,19 @@ export function TradesPage() {
           {evaluate.error.message}
         </Alert>
       )}
-      {evaluate.data && <TradeView result={evaluate.data} isPoints={!!meta.data?.is_points} />}
+      {evaluate.data && meta.data && (
+        <TradeView
+          result={evaluate.data}
+          isPoints={meta.data.is_points}
+          reverse={['TO', ...meta.data.categories.filter((c) => c.reverse).map((c) => c.stat)]}
+        />
+      )}
     </Stack>
   )
 }
 
-function TradeView({ result, isPoints }: { result: TradeResult; isPoints: boolean }) {
-  const data = Object.entries(result.per_game_change).map(([stat, change]) => ({ stat, change }))
+function TradeView({ result, isPoints, reverse }: { result: TradeResult; isPoints: boolean; reverse: string[] }) {
+  const rows = Object.entries(result.per_game_change).map(([stat, value]) => ({ stat, value }))
   const verdict =
     result.value_change > 0.5 ? '🤝 You win this trade' : result.value_change < -0.5 ? '🙅 You lose this trade' : '⚖️ Pretty even'
 
@@ -114,19 +120,7 @@ function TradeView({ result, isPoints }: { result: TradeResult; isPoints: boolea
         <Text size="sm" c="dimmed" mb="md">
           What you get minus what you give, per game
         </Text>
-        <BarChart
-          h={Math.max(220, data.length * 32)}
-          data={data}
-          dataKey="stat"
-          orientation="vertical"
-          series={[{ name: 'change', label: 'Per-game change', color: 'indigo.6' }]}
-          getBarColor={(v) => (v >= 0 ? 'teal.6' : 'red.6')}
-          valueFormatter={(v) => signed(v, 2)}
-          referenceLines={[{ x: 0, color: 'gray.5' }]}
-          gridAxis="x"
-          tickLine="none"
-          barProps={{ radius: 4 }}
-        />
+        <DeltaBars rows={rows} format={(v, stat) => signed(v, isRatio(stat) ? 3 : 2)} reverse={reverse} />
       </Paper>
     </Stack>
   )

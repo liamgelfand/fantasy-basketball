@@ -29,15 +29,17 @@ def delete_session(session_id: str, chats: ChatSessionsDep):
 
 
 @router.post("/sessions/{session_id}/messages")
-def send_message(session_id: str, body: schemas.ChatMessage, chats: ChatSessionsDep):
-    state = chats.get(session_id)
+def send_message(session_id: str, body: schemas.ChatMessage, engine: EngineDep, chats: ChatSessionsDep):
+    """Answers use the snapshot for this request's settings, so a chat follows window/punt
+    changes and refreshes instead of reasoning over stale data."""
+    state = chats.get(session_id, engine)
     if state is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat session expired. Start a new chat.")
-    if state.lock.locked():
-        raise HTTPException(status.HTTP_409_CONFLICT, "Claude is still answering the last message.")
-    return sse(agent_events(state.agent, body.text, state.lock))
+    return sse(agent_events(
+        lambda on_tool, cancel: chats.ask(session_id, state, engine, body.text, on_tool, cancel)))
 
 
 @router.post("/game-plan")
 def game_plan(engine: EngineDep, chats: ChatSessionsDep):
-    return sse(agent_events(chats.new_agent(engine), AI_REPORT_PROMPT))
+    agent = chats.new_agent(engine)
+    return sse(agent_events(lambda on_tool, cancel: agent.ask(AI_REPORT_PROMPT, on_tool=on_tool, cancel=cancel)))

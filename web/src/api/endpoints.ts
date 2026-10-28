@@ -6,6 +6,7 @@ import type {
   LeagueMeta,
   Matchup,
   MoveResult,
+  PlayerDetail,
   Position,
   Roster,
   Standing,
@@ -27,6 +28,7 @@ export const api = {
     get<FreeAgentBoard>('/free-agents', s, { position, include_injured: includeInjured }, signal),
   teamRoster: (s: SnapshotParams, teamId: number, signal?: AbortSignal) =>
     get<TeamRoster>(`/teams/${teamId}/roster`, s, {}, signal),
+  player: (s: SnapshotParams, id: number, signal?: AbortSignal) => get<PlayerDetail>(`/players/${id}`, s, {}, signal),
   standings: (s: SnapshotParams, signal?: AbortSignal) => get<Standing[]>('/standings', s, {}, signal),
   activity: (s: SnapshotParams, signal?: AbortSignal) => get<Activity[]>('/activity', s, { limit: 30 }, signal),
   report: (s: SnapshotParams, signal?: AbortSignal) => get<{ markdown: string }>('/report', s, {}, signal),
@@ -38,8 +40,9 @@ export const api = {
 
   createChat: (s: SnapshotParams) => post<{ id: string }>('/assistant/sessions', s),
   deleteChat: (id: string) => request<void>('DELETE', buildUrl(`/assistant/sessions/${id}`)),
-  sendChat: (id: string, text: string, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal) =>
-    streamEvents(buildUrl(`/assistant/sessions/${id}/messages`), { text }, onEvent, signal),
+  // Carries the snapshot settings so the chat answers from the same data the pages show.
+  sendChat: (s: SnapshotParams, id: string, text: string, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal) =>
+    streamEvents(buildUrl(`/assistant/sessions/${id}/messages`, snapshotQuery(s)), { text }, onEvent, signal),
   gamePlan: (s: SnapshotParams, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal) =>
     streamEvents(buildUrl('/assistant/game-plan', snapshotQuery(s)), {}, onEvent, signal),
 }
