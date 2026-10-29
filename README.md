@@ -21,7 +21,27 @@ python -m fbb check       # verifies everything and shows what it detected
 Application → Cookies → `https://fantasy.espn.com`, copy `espn_s2` and `SWID` into `.env`.
 They last months; if requests start failing with 401, grab fresh ones.
 
-## Web app (recommended)
+## Desktop app (recommended)
+
+One-time setup (Windows, needs Node.js 20+ for the web client build):
+
+```powershell
+.\.venv\Scripts\python -m fbb desktop --install-shortcuts   # adds Desktop + Start menu shortcuts
+```
+
+Then open **Fantasy HQ** from the desktop or the Start menu. It runs in its own window (Edge WebView2),
+with no console and no browser tab:
+
+- It rebuilds the web client on launch whenever anything in `web/` changed, so it's never stale.
+- Only one copy runs: opening it again brings the existing window to the front.
+- Closing the window stops the server.
+- It serves on `127.0.0.1:8765`, so `python -m fbb serve` on :8000 can run alongside it.
+- If it can't start (missing `.env` value, build error), the window says why. Logs are in
+  `.fbb/logs/desktop.log`.
+
+`python -m fbb desktop` launches it from a terminal, and `--remove-shortcuts` undoes the setup.
+
+## Web app (browser)
 
 Double-click **`Fantasy HQ.bat`** (it builds the web client on first run), or:
 
@@ -50,6 +70,7 @@ fbb/                 Python package (domain + API)
   analysis.py        pure math: valuation, lineups, projection, simulation
   engine.py          use cases combining data + analysis
   agent.py           Claude tool loop over Engine methods
+  desktop.py         desktop window launcher (pywebview), shortcuts, auto-rebuild
   api/               FastAPI layer
     app.py           app factory; serves /api and the built client
     routes/          thin HTTP handlers (league, players, moves, assistant)
@@ -83,6 +104,7 @@ Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest
 | `python -m fbb ask "should I drop X for Y?"` | One question, answered with tool calls | yes |
 | `python -m fbb chat` | Conversation with follow-ups | yes |
 | `python -m fbb json matchup` | Raw structured data (`matchup`, `roster`, `free-agents`, `standings`) | no |
+| `python -m fbb desktop` | Desktop app window (`--install-shortcuts` / `--remove-shortcuts`) | chat only |
 
 ## How the numbers work
 

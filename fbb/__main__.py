@@ -123,6 +123,17 @@ def cmd_serve(args) -> None:
     uvicorn.run("fbb.api:create_app", factory=True, host=args.host, port=args.port, reload=args.reload)
 
 
+def cmd_desktop(args) -> None:
+    from . import desktop
+
+    if args.install_shortcuts or args.remove_shortcuts:
+        paths = desktop.install_shortcuts() if args.install_shortcuts else desktop.remove_shortcuts()
+        verb = "Created" if args.install_shortcuts else "Removed"
+        print("\n".join(f"{verb} {path}" for path in paths) or "No shortcuts to remove.")
+        return
+    desktop.run()
+
+
 def main(argv: list[str] | None = None) -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # emoji in tables on Windows consoles
@@ -152,6 +163,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--reload", action="store_true", help="auto-reload on code changes (development)")
     p.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
     p.set_defaults(fn=cmd_serve)
+
+    p = sub.add_parser("desktop", help="open Fantasy HQ in its own window (what the desktop shortcut runs)")
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--install-shortcuts", action="store_true", help="add Desktop and Start menu shortcuts")
+    group.add_argument("--remove-shortcuts", action="store_true", help="remove those shortcuts")
+    p.set_defaults(fn=cmd_desktop)
 
     args = parser.parse_args(argv)
     args.fn(args)
