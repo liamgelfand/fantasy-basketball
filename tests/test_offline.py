@@ -66,7 +66,7 @@ def test_report_renders(engine):
 def test_agent_tools_run_offline(engine):
     from fbb.agent import FantasyAgent
 
-    agent = FantasyAgent(engine, client=object())
+    agent = FantasyAgent(engine)
     for name, args in [("league_overview", {}), ("my_roster", {}), ("matchup_projection", {}),
                        ("free_agents", {"sort": "season", "limit": 5}), ("standings", {}),
                        ("simulate_moves", {"add": ["Player 60"], "drop": ["Player 5"]}),

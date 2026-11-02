@@ -32,7 +32,11 @@ def create_app(league_service: LeagueService | None = None, chats: ChatSessions 
     app = FastAPI(title="Fantasy HQ", version="1.1.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.league = league_service or LeagueService(load_config())
     app.state.chats = chats or ChatSessions(default_agent_factory, ChatStore(CHAT_DIR))
-    app.state.chat_enabled = bool(os.getenv("ANTHROPIC_API_KEY")) if chat_enabled is None else chat_enabled
+    if chat_enabled is None:
+        from ..agent import subscription_ready
+
+        chat_enabled = subscription_ready()
+    app.state.chat_enabled = chat_enabled
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or allowed_hosts_from_env())
 
     @app.exception_handler(UpstreamError)

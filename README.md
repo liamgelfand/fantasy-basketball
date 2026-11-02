@@ -123,10 +123,15 @@ Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest
 
 ## Claude settings
 
-`ANTHROPIC_API_KEY` in `.env`. Defaults: `claude-opus-5-5`, effort `high`, web search on.
-For cheaper runs set `CLAUDE_MODEL=claude-sonnet-5-5` or `CLAUDE_EFFORT=medium`. Requests opt
-into server-side refusal fallbacks (`fallbacks: "default"`), so a declined request is retried
-on a fallback model rather than failing.
+The assistant runs on your Claude plan (Pro or Max) through the
+[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview): install
+[Claude Code](https://code.claude.com) and log in (`claude`, then `/login`). No API key is used,
+and any `ANTHROPIC_API_KEY` in the environment is ignored so it can't bill API credits. Usage
+counts toward your plan's limits. This is meant for personal use; Anthropic does not allow
+offering claude.ai login in products for other people.
+
+Defaults: `claude-opus-5-5`, effort `high`, web search on. For lighter runs that use less of
+your plan, set `CLAUDE_MODEL=claude-sonnet-5-5` or `CLAUDE_EFFORT=medium`.
 
 ## Known limits
 

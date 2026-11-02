@@ -12,7 +12,8 @@ from ..streaming import agent_events, sse
 def require_claude(request: Request) -> None:
     if not request.app.state.chat_enabled:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Add ANTHROPIC_API_KEY to your .env file and restart the server to enable Claude.")
+                            "Install Claude Code and log in (run `claude`, then /login), then restart the server "
+                            "to enable Claude.")
 
 
 router = APIRouter(prefix="/assistant", tags=["assistant"], dependencies=[Depends(require_claude)])
