@@ -157,7 +157,7 @@ export function AppLayout() {
         </AppShell.Section>
       </AppShell.Navbar>
 
-      <AppShell.Main className={isChat ? classes.mainChat : undefined}>
+      <AppShell.Main className={isChat ? `${classes.main} ${classes.mainChat}` : classes.main}>
         {meta.isError && !staleSettings && (
           <Alert
             color="red"
