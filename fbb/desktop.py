@@ -30,8 +30,9 @@ LOG_FILE = DATA_DIR / "logs" / "desktop.log"
 # Cookies and localStorage (saved chat, color scheme) persist here between launches.
 WEBVIEW_DIR = DATA_DIR / "webview"
 # Fixed so the page origin (and with it localStorage) stays the same between launches.
-# Not 8000, so `fbb serve` can run alongside the desktop app.
-PREFERRED_PORT = 8765
+# Not 8000 (used by `fbb serve` and personal_agent) or AppTracker's 8000-8100 range, so they can all run
+# alongside the desktop app. Falls back to a free port if it's taken.
+PREFERRED_PORT = 8777
 MUTEX_NAME = "Local\\fbb-fantasy-hq-desktop"
 # Files that feed `npm run build`, besides everything under src/ and public/.
 WEB_BUILD_FILES = ("index.html", "package.json", "package-lock.json", "vite.config.ts", "postcss.config.cjs",
@@ -402,7 +403,7 @@ def run() -> None:
         log.info("Starting %s", APP_NAME)
         server = DesktopServer()
         window = webview.create_window(APP_NAME, html=status_page("Starting..."), width=1440, height=900,
-                                       min_size=(960, 640), text_select=True,
+                                       min_size=(960, 640), maximized=True, text_select=True,
                                        background_color="#1a1b1e" if windows_prefers_dark() else "#ffffff")
         window.events.closed += server.stop
         webview.start(_boot, (window, server), private_mode=False, storage_path=str(WEBVIEW_DIR), icon=str(ICON))
