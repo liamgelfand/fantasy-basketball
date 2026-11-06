@@ -133,6 +133,7 @@ class FreeAgentRow(PlayerRow):
     matchup_gain: float
     win_prob_after: float
     best_drop: str | None
+    add_date: dt.date | None = Field(description="Day the move is simulated on: the player's next game this matchup")
     low_sample: bool
 
 
@@ -181,6 +182,30 @@ class MoveResultOut(BaseModel):
     season_value_delta: float
     category_deltas: dict[str, float]
     projected_delta: dict[str, float]
+    notes: list[str]
+
+
+class PlannedMoveOut(BaseModel):
+    date: dt.date | None
+    is_today: bool
+    add_id: int
+    add: str
+    add_positions: list[str]
+    drop: str | None = Field(description="null: the add goes into an open roster spot")
+    fills: list[str] = Field(description="Starting slots that would otherwise sit empty that day")
+    matchup_gain: float = Field(description="On top of the earlier moves in the plan")
+    win_prob_after: float
+    notes: list[str]
+
+
+class MovePlanOut(BaseModel):
+    gain_label: str
+    moves: list[PlannedMoveOut]
+    total_gain: float
+    win_prob_before: float
+    win_prob_after: float
+    adds_left: int | None = Field(description="Adds left this week from MAX_WEEKLY_ADDS; null when not set")
+    capped: bool
     notes: list[str]
 
 

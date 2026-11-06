@@ -26,6 +26,11 @@ def _lookup(engine: Engine, names: list[str]) -> list[PlayerInfo]:
     return [p for _, p in found]
 
 
+@router.get("/moves/plan", response_model=schemas.MovePlanOut)
+def move_plan(engine: EngineDep):
+    return presenters.move_plan(engine)
+
+
 @router.post("/simulate", response_model=schemas.MoveResultOut)
 def simulate(body: schemas.SimulationRequest, engine: EngineDep):
     if not body.add and not body.drop:

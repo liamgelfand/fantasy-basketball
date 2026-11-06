@@ -119,6 +119,27 @@ def test_simulate(client):
     assert any("trade target" in n for n in taken["notes"])
 
 
+def test_move_plan():
+    from fakes import streaming_league
+
+    def factory(cfg):
+        data = streaming_league()
+        data.cfg = cfg
+        return Engine(data)
+
+    client = TestClient(make_app(LeagueService(FakeData().cfg, factory=factory)))
+    plan = client.get("/api/moves/plan").json()
+    today, tomorrow = plan["moves"]
+    assert today["is_today"] and today["add"] == "SF Today" and today["drop"] is None
+    assert today["fills"] == ["SF"] and today["add_positions"] == ["SF"]
+    assert not tomorrow["is_today"] and tomorrow["date"] == "2026-10-27" and tomorrow["drop"]
+    assert plan["adds_left"] is None and not plan["capped"]
+    assert plan["win_prob_after"] > plan["win_prob_before"]
+
+    rows = {r["name"]: r for r in client.get("/api/free-agents").json()["rows"]}
+    assert rows["SF Later"]["add_date"] == "2026-10-27"
+
+
 def test_trade(client):
     partner = client.get("/api/teams/2/roster").json()
     res = client.post("/api/trades/evaluate",
@@ -149,11 +170,11 @@ def test_chat_streams_tools_then_answer(client):
     assert client.post(f"/api/assistant/sessions/{sid}/messages", json={"text": ""}).status_code == 422
 
 
-def test_chat_disabled_without_key(builds):
+def test_chat_disabled_without_claude_login(builds):
     service = LeagueService(FakeData().cfg, factory=lambda cfg: Engine(FakeData()))
     client = TestClient(make_app(service, chat_enabled=False))
     res = client.post("/api/assistant/sessions")
-    assert res.status_code == 503 and "ANTHROPIC_API_KEY" in res.json()["detail"]
+    assert res.status_code == 503 and "Claude Code" in res.json()["detail"]
 
 
 def test_upstream_failure_is_503():
@@ -203,7 +224,8 @@ def test_chat_survives_restart(tmp_path, builds):
 
 def test_untrusted_host_rejected(builds):
     service = LeagueService(FakeData().cfg, factory=lambda cfg: Engine(FakeData()))
-    client = TestClient(create_app(service, ChatSessions(EchoAgent), web_dist=None, allowed_hosts=["localhost"]))
+    client = TestClient(create_app(service, ChatSessions(EchoAgent), chat_enabled=True, web_dist=None,
+                                   allowed_hosts=["localhost"]))
     assert client.get("/api/meta").status_code == 400
     assert client.get("/api/meta", headers={"host": "localhost"}).status_code == 200
 
@@ -213,18 +235,99 @@ def test_agent_stops_when_cancelled():
 
     from fbb.agent import FantasyAgent
 
-    class NoCalls:
-        class beta:
-            class messages:
-                @staticmethod
-                def create(**_):
-                    raise AssertionError("should not call the API after cancel")
+    def no_calls(**_):
+        raise AssertionError("should not start Claude after cancel")
 
-    agent = FantasyAgent(Engine(FakeData()), client=NoCalls())
+    agent = FantasyAgent(Engine(FakeData()), query_fn=no_calls)
     cancel = threading.Event()
     cancel.set()
     assert agent.ask("hi", cancel=cancel) == "Stopped."
     assert agent.export_messages() == [{"role": "user", "content": "hi"}]
+
+
+def test_agent_runs_through_claude_code_and_resumes():
+    from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
+
+    from fbb.agent import TOOL_PREFIX, FantasyAgent
+
+    calls = []
+
+    async def fake_query(prompt, options):
+        calls.append((prompt, options))
+        yield AssistantMessage(content=[ToolUseBlock(id="t1", name=TOOL_PREFIX + "my_roster", input={}),
+                                        ToolUseBlock(id="t2", name="WebSearch", input={"query": "injuries"})],
+                               model="m")
+        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=2,
+                            session_id=f"s{len(calls)}", result=f"answer {len(calls)}")
+
+    agent = FantasyAgent(Engine(FakeData()), query_fn=fake_query)
+    seen = []
+    assert agent.ask("who do I drop?", on_tool=lambda n, a: seen.append(n)) == "answer 1"
+    assert seen == ["my_roster", "web_search"]
+
+    options = calls[0][1]
+    assert options.tools == ["WebSearch"] and options.setting_sources == []  # no file or shell tools
+    assert TOOL_PREFIX + "simulate_moves" in options.allowed_tools and options.resume is None
+
+    assert agent.ask("and who do I add?") == "answer 2"
+    assert calls[1][0] == "and who do I add?" and calls[1][1].resume == "s1"  # follow-up resumes the session
+    assert [m["role"] for m in agent.export_messages()] == ["user", "assistant", "user", "assistant"]
+
+    restored = FantasyAgent(Engine(FakeData()), query_fn=fake_query)
+    restored.import_messages(agent.export_messages())
+    restored.ask("anything else?")
+    assert "who do I drop?" in calls[2][0] and calls[2][1].resume is None  # restored chat gets a recap
+
+
+def test_api_key_is_not_passed_to_claude_code(monkeypatch):
+    import importlib
+    import os
+
+    import fbb.agent
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    importlib.reload(fbb.agent)  # importing the module strips the key
+    assert "ANTHROPIC_API_KEY" not in os.environ
+
+
+def test_turn_limit_returns_stopped_message():
+    from claude_agent_sdk import ResultError, ResultMessage
+
+    from fbb.agent import FantasyAgent
+
+    async def hits_turn_limit(prompt, options):
+        # Like the real SDK: the error result is yielded, then the exiting CLI raises ResultError.
+        yield ResultMessage(subtype="error_max_turns", duration_ms=1, duration_api_ms=1, is_error=True,
+                            num_turns=25, session_id="s1")
+        raise ResultError("Claude Code returned an error result")
+
+    agent = FantasyAgent(Engine(FakeData()), query_fn=hits_turn_limit)
+    assert agent.ask("plan my week") == "Stopped: too many tool rounds without a final answer."
+    assert agent.session_id == "s1"
+
+
+def test_cancel_mid_run_stops_and_closes_claude():
+    import asyncio
+    import threading
+
+    from fbb.agent import FantasyAgent
+
+    started, closed = threading.Event(), threading.Event()
+    cancel = threading.Event()
+
+    async def slow_query(prompt, options):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+            yield  # pragma: no cover
+        finally:
+            closed.set()
+
+    agent = FantasyAgent(Engine(FakeData()), query_fn=slow_query)
+    threading.Thread(target=lambda: started.wait(5) and cancel.set(), daemon=True).start()
+    assert agent.ask("slow question", cancel=cancel) == "Stopped."
+    assert closed.is_set()  # the Claude Code stream was shut down, not left running
+    assert agent.export_messages() == [{"role": "user", "content": "slow question"}]
 
 
 def test_player_detail(client):

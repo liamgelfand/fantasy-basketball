@@ -6,10 +6,12 @@ from functools import cached_property
 
 from .analysis import (
     MatchupProjection,
+    MovePlan,
     MoveResult,
     Valuer,
     category_weights,
     daily_starters,
+    plan_moves,
     project_matchup,
     simulate,
     stat,
@@ -64,9 +66,18 @@ class Engine:
     def ros_games(self, p: PlayerInfo) -> int:
         return len(p.game_days & set(self.data.rest_of_season_periods()))
 
-    def simulate(self, add: list[PlayerInfo], drop: list[PlayerInfo]) -> MoveResult:
+    @property
+    def move_days(self) -> list[int]:
+        """Matchup days a move can still use: today only until its first game tips."""
+        first = self.data.today_sp + (1 if self.data.today_started() else 0)
+        return [sp for sp in self.remaining if sp >= first]
+
+    def first_game_day(self, p: PlayerInfo) -> int | None:
+        return next((sp for sp in self.move_days if sp in p.game_days), None)
+
+    def simulate(self, add: list[PlayerInfo], drop: list[PlayerInfo], on_sp: int | None = None) -> MoveResult:
         return simulate(self.data, self.projection, self.data.my_team.roster, add, drop,
-                        self.matchup_now[1], self.valuer, self.rank, self.data.roster_size)
+                        self.matchup_now[1], self.valuer, self.rank, self.data.roster_size, on_sp)
 
     # ---------- roster decisions ----------
 
@@ -82,12 +93,16 @@ class Engine:
         return len(active) < self.data.roster_size
 
     def best_drop_for(self, add: PlayerInfo, candidates: int = 3) -> tuple[PlayerInfo | None, MoveResult]:
-        """Try the weakest few roster players as the drop and keep the swap that helps the matchup most."""
+        """Try the weakest few roster players as the drop and keep the swap that helps the matchup most.
+
+        The move is timed for the add's first game day, so the dropped player keeps any games before it.
+        """
+        on_sp = self.first_game_day(add)
         if self.has_open_spot:
-            return None, self.simulate([add], [])
+            return None, self.simulate([add], [], on_sp)
         best = None
         for drop in self.drop_candidates[:candidates]:
-            result = self.simulate([add], [drop])
+            result = self.simulate([add], [drop], on_sp)
             score = self.matchup_gain(result) + 0.05 * result.season_value_delta
             if best is None or score > best[0]:
                 best = (score, drop, result)
@@ -105,6 +120,7 @@ class Engine:
             "value_over_worst": round(self.value(fa) - (self.value(worst) if worst else 0), 2),
             "games_left": self.games_left(fa),
             "weighted_value": self.valuer.total(fa, self.weights),
+            "add_sp": self.first_game_day(fa),
         }
 
     @cached_property
@@ -142,6 +158,48 @@ class Engine:
 
     def top_season_adds(self, n: int = 10) -> list[dict]:
         return sorted(self.free_agent_board, key=lambda r: r["value"], reverse=True)[:n]
+
+    @property
+    def adds_left(self) -> int | None:
+        """Adds left this week per MAX_WEEKLY_ADDS / ADDS_USED_THIS_WEEK; None when no limit is set."""
+        if self.cfg.max_weekly_adds is None:
+            return None
+        return max(0, self.cfg.max_weekly_adds - self.cfg.adds_used_this_week)
+
+    @cached_property
+    def move_plan(self) -> MovePlan:
+        """Dated add/drop sequence for the rest of the matchup (today first while its games haven't tipped)."""
+        proj = self.projection
+        if proj.opponent is None:
+            return MovePlan([], proj, proj, self.adds_left, notes=["No active matchup to plan for."])
+        plan = plan_moves(self.data, proj, self.data.my_team.roster, self.data.free_agents(), self.matchup_now[1],
+                          self.valuer, self.rank, self.data.roster_size, self.move_days, adds_left=self.adds_left,
+                          min_gain=1.0 if self.data.is_points else 0.02)
+        if self.data.today_started():
+            plan.notes.append("Today's games have tipped, so the plan starts tomorrow.")
+        limit = self.data.acquisition_rules.get("matchup_acquisition_limit")
+        if self.adds_left is None and limit:
+            plan.notes.append(f"Your league allows {limit} adds per matchup. Set MAX_WEEKLY_ADDS and "
+                              "ADDS_USED_THIS_WEEK in .env to cap this plan to what you have left.")
+        return plan
+
+    def move_plan_summary(self) -> dict:
+        plan = self.move_plan
+        today = self.data.today_sp
+        return {
+            "adds_left_this_week": plan.adds_left,
+            "capped_by_weekly_limit": plan.capped,
+            "matchup_gain_total": round(plan.gain, 3),
+            "win_probability_before": round(plan.before.win_matchup_prob, 3),
+            "win_probability_after": round(plan.after.win_matchup_prob, 3),
+            "moves": [{
+                "date": str(m.date), "day": "today" if m.sp == today else "tomorrow" if m.sp == today + 1 else None,
+                "add": m.add.name, "drop": m.drop.name if m.drop else None,
+                "fills_empty_slots": m.fills, "matchup_gain": round(m.gain, 3),
+                "win_prob_after": m.result.win_prob_after, "notes": m.result.notes,
+            } for m in plan.moves],
+            "notes": plan.notes,
+        }
 
     # ---------- daily lineup ----------
 
@@ -261,6 +319,7 @@ class Engine:
         return {
             **self.player_summary(r["player"]),
             "suggested_drop": r["drop"].name if r["drop"] else None,
+            "add_on": str(self.data.sp_date(r["add_sp"])) if r["add_sp"] is not None else None,
             "matchup_expected_cat_gain": round(res.gain, 3),
             "matchup_projected_change": res.projected_delta,
             "matchup_win_prob_after": res.win_prob_after,

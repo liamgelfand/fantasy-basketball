@@ -81,7 +81,7 @@ export function ReportPage() {
             onClick={runPlan}
             loading={plan.status === 'running'}
             disabled={!meta.data?.chat_enabled}
-            title={meta.data?.chat_enabled ? 'Uses API credits' : 'Add ANTHROPIC_API_KEY to .env to enable'}
+            title={meta.data?.chat_enabled ? 'Uses your Claude plan' : 'Log in to Claude Code to enable'}
           >
             Claude game plan
           </Button>
