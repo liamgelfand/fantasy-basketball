@@ -145,6 +145,7 @@ def free_agents(engine: Engine, position: str | None, include_injured: bool) -> 
             matchup_gain=round(engine.matchup_gain(r["result"]), 2),
             win_prob_after=r["result"].win_prob_after,
             best_drop=r["drop"].name if r["drop"] else None,
+            add_date=engine.data.sp_date(r["add_sp"]) if r["add_sp"] is not None else None,
             low_sample=p.gp < 5 and p.window == "blend",
         ))
     rows.sort(key=lambda r: r.matchup_gain, reverse=True)
@@ -188,6 +189,25 @@ def move_result(engine: Engine, res: MoveResult) -> s.MoveResultOut:
         matchup_gain=round(engine.matchup_gain(res), 3),
         games_delta=res.games_delta, season_value_delta=res.season_value_delta,
         category_deltas=res.category_deltas, projected_delta=res.projected_delta, notes=res.notes,
+    )
+
+
+def move_plan(engine: Engine) -> s.MovePlanOut:
+    plan = engine.move_plan
+    return s.MovePlanOut(
+        gain_label="Proj FPTS gain" if engine.data.is_points else "Exp cats gain",
+        moves=[s.PlannedMoveOut(
+            date=m.date, is_today=m.sp == engine.data.today_sp, add_id=m.add.id, add=m.add.name,
+            add_positions=[x for x in m.add.eligible_slots if x in POSITIONS],
+            drop=m.drop.name if m.drop else None, fills=m.fills, matchup_gain=round(m.gain, 3),
+            win_prob_after=m.result.win_prob_after, notes=m.result.notes,
+        ) for m in plan.moves],
+        total_gain=round(plan.gain, 3),
+        win_prob_before=round(plan.before.win_matchup_prob, 3),
+        win_prob_after=round(plan.after.win_matchup_prob, 3),
+        adds_left=plan.adds_left,
+        capped=plan.capped,
+        notes=plan.notes + engine.ownership_notes([m.add for m in plan.moves]),
     )
 
 

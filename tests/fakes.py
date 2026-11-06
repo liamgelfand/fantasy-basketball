@@ -38,6 +38,7 @@ class FakeData:
         self.categories, self.lineup_slots, self.is_points = CATS, SLOTS, False
         self.name, self.scoring_type, self.roster_size = "Test League", "H2H_CATEGORY", 13
         self.today_sp = 7
+        self.started = False  # today's first game has tipped
         pid = iter(range(1000))
         self.teams = {}
         for tid in (1, 2, 3, 4):
@@ -64,7 +65,7 @@ class FakeData:
         return START + dt.timedelta(days=sp - self.today_sp)
 
     def today_started(self):
-        return False
+        return self.started
 
     def rest_of_season_periods(self):
         return list(range(self.today_sp, 60))
@@ -89,3 +90,40 @@ class FakeData:
 
     def recent_activity(self, size=15):
         return [{"date": "2026-10-25 10:00", "team": "Team 2", "action": "FA ADDED", "player": "Player 99"}]
+
+
+STRONG = {"PTS": 24.0, "REB": 8.0, "AST": 6.0, "STL": 1.4, "BLK": 1.0, "TO": 2.0, "FGA": 17.0, "FGM": 8.5,
+          "FTA": 6.0, "FTM": 5.0, "3PA": 7.0, "3PM": 2.8}
+
+
+def streaming_league(full_roster: bool = False) -> FakeData:
+    """My roster has no SF-eligible player, so the SF slot sits empty every day.
+
+    Free agents: "SF Today" (SF, plays only today, sp 7) and "SF Later" (SF, plays sp 8-11).
+    Every roster player plays all of sp 7-11. 12 active players leave one roster spot open;
+    `full_roster` fills it. The opponent mirrors my first 12 players and the totals so far are tied.
+    """
+    data = FakeData()
+    rng = random.Random(11)
+    non_sf = [["PG", "G", "UT"], ["SG", "G", "UT"], ["PF", "F", "UT"], ["C", "UT"]]
+    roster = []
+    for k in range(13 if full_roster else 12):
+        p = make_player(500 + k, rng, slot=SLOTS[k] if k < 10 and SLOTS[k] != "SF" else "BE")
+        p.eligible_slots = non_sf[k % 4] + ["BE", "IR"]
+        p.position = p.eligible_slots[0]
+        p.game_days = set(range(7, 12))
+        roster.append(p)
+    data.teams[1].roster = roster
+    # Tight matchup: the opponent mirrors my roster (same holes) and the totals so far are tied.
+    data.teams[2].roster = [PlayerInfo(**{**p.__dict__, "id": p.id + 100, "name": f"Opp {p.id}"}) for p in roster[:12]]
+    tied = data.current_matchup()[1]
+    data.current_matchup = lambda: (data.teams[2], dict(tied), dict(tied))
+
+    def sf(i: int, name: str, days: set[int]) -> PlayerInfo:
+        p = make_player(i, rng)
+        p.name, p.eligible_slots, p.position, p.game_days = name, ["SF", "F", "UT", "BE", "IR"], "SF", days
+        p.per_game = {**STRONG, "FG%": STRONG["FGM"] / STRONG["FGA"], "FT%": STRONG["FTM"] / STRONG["FTA"]}
+        return p
+
+    data._fas = [sf(600, "SF Today", {7}), sf(601, "SF Later", {8, 9, 10, 11})]
+    return data

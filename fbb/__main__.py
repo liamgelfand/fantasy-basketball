@@ -93,6 +93,7 @@ def cmd_json(args) -> None:
         "matchup": engine.projection_summary,
         "roster": lambda: engine.team_summary(d.my_team),
         "free-agents": lambda: [engine.fa_row(r) for r in engine.top_streamers(25)],
+        "moves": engine.move_plan_summary,
         "standings": lambda: [engine.team_summary(t) | {"roster": None} for t in d.standings()],
     }[args.what]()
     print(json.dumps(payload, indent=2, default=str))
@@ -154,7 +155,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("chat", help="interactive conversation with Claude about your team").set_defaults(fn=cmd_chat)
 
     p = sub.add_parser("json", help="dump structured data")
-    p.add_argument("what", choices=["matchup", "roster", "free-agents", "standings"])
+    p.add_argument("what", choices=["matchup", "roster", "free-agents", "moves", "standings"])
     p.set_defaults(fn=cmd_json)
 
     p = sub.add_parser("serve", help="run the Fantasy HQ web app (API + dashboard)")

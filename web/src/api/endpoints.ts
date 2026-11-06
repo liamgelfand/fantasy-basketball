@@ -5,6 +5,7 @@ import type {
   FreeAgentBoard,
   LeagueMeta,
   Matchup,
+  MovePlan,
   MoveResult,
   PlayerDetail,
   Position,
@@ -26,6 +27,7 @@ export const api = {
   roster: (s: SnapshotParams, signal?: AbortSignal) => get<Roster>('/roster', s, {}, signal),
   freeAgents: (s: SnapshotParams, position: Position | null, includeInjured: boolean, signal?: AbortSignal) =>
     get<FreeAgentBoard>('/free-agents', s, { position, include_injured: includeInjured }, signal),
+  movePlan: (s: SnapshotParams, signal?: AbortSignal) => get<MovePlan>('/moves/plan', s, {}, signal),
   teamRoster: (s: SnapshotParams, teamId: number, signal?: AbortSignal) =>
     get<TeamRoster>(`/teams/${teamId}/roster`, s, {}, signal),
   player: (s: SnapshotParams, id: number, signal?: AbortSignal) => get<PlayerDetail>(`/players/${id}`, s, {}, signal),

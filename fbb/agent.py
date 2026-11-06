@@ -71,8 +71,9 @@ and say which numbers drove the call. Use web search for news ESPN's feed may la
 updates, minutes changes, rotation news, return timelines. Mention dates when you cite news.
 
 Nothing you suggest is executed automatically: the manager makes the moves in the ESPN app. So be
-concrete: exact player names, which day, which slot, who to drop. Before recommending an add/drop,
-run simulate_moves on it. Weigh this week's matchup against rest-of-season value and say which
+concrete: exact player names, which day, which slot, who to drop. For streaming, start from
+move_plan: an empty lineup slot today is production lost for good once games tip. Before
+recommending an add/drop, run simulate_moves on it. Weigh this week's matchup against rest-of-season value and say which
 one a recommendation is for. Respect acquisition limits and punted categories.
 
 Today is {today}. League: {league} ({scoring}). The manager's team: {team}."""
@@ -119,6 +120,7 @@ class FantasyAgent:
                 "acquisition_rules": d.acquisition_rules,
                 "my_team": {"name": d.my_team.name, "record": d.my_team.record, "standing": d.my_team.standing,
                             "acquisitions_this_season": d.my_team.acquisitions},
+                "adds_left_this_week": e.adds_left,  # from MAX_WEEKLY_ADDS / ADDS_USED_THIS_WEEK; None = not set
                 "punted_categories": sorted(self.cfg.punt_categories),
                 "stat_window_in_use": self.cfg.stat_window,
                 "today_scoring_period": d.today_sp, "todays_games_started": d.today_started(),
@@ -171,6 +173,9 @@ class FantasyAgent:
             result["notes"] += e.ownership_notes(adds)
             return result
 
+        def move_plan():
+            return e.move_plan_summary()
+
         def evaluate_trade(give: list[str], receive: list[str]):
             gives, m1 = self._resolve_players(give)
             gets, m2 = self._resolve_players(receive)
@@ -189,7 +194,7 @@ class FantasyAgent:
             return build_report(e)
 
         handlers = {f.__name__: f for f in (league_overview, my_roster, matchup_projection, team_roster, free_agents,
-                                            player_details, simulate_moves, evaluate_trade, standings,
+                                            player_details, simulate_moves, move_plan, evaluate_trade, standings,
                                             recent_activity, full_report)}
         names = {"type": "array", "items": {"type": "string"}}
         schema = lambda props=None, req=None: {"type": "object", "properties": props or {}, "required": req or []}
@@ -205,6 +210,8 @@ class FantasyAgent:
              "input_schema": schema({"name": {"type": "string"}, "include_news": {"type": "boolean"}}, ["name"])},
             {"name": "simulate_moves", "description": "Re-project the current matchup after adding and/or dropping players. Returns expected categories won and win probability before and after, per-category changes, and rest-of-season value change.",
              "input_schema": schema({"add": names, "drop": names})},
+            {"name": "move_plan", "description": "Dated add/drop sequence for the rest of the matchup, built day by day: today's moves first (e.g. a free agent who plays today filling an empty lineup slot, no drop needed if a roster spot is open), then each later day's best move on the roster left by the earlier ones. Respects the weekly add limit when the manager has configured it. Today is skipped once its games have tipped.",
+             "input_schema": schema()},
             {"name": "evaluate_trade", "description": "Evaluate a trade from my side: per-category z-score and per-game changes, rest-of-season games, and the effect on this matchup.",
              "input_schema": schema({"give": names, "receive": names}, ["give", "receive"])},
             {"name": "standings", "description": "League standings.", "input_schema": schema()},
@@ -331,7 +338,7 @@ AI_REPORT_PROMPT = """Write my game plan for this matchup and the week ahead.
 
 Start from full_report, then dig in where it matters: check news (and the web) for any injured
 or questionable players on my roster, my opponent's roster, and the top pickup candidates;
-simulate the adds and drops you're considering; check if any trade target fits my category needs.
+check move_plan and simulate the adds and drops you're considering; check if any trade target fits my category needs.
 
 Output markdown with these sections:
 1. **Bottom line**: 2-3 sentences on where the matchup stands and the single most important move.

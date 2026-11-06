@@ -103,7 +103,7 @@ Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest
 | `python -m fbb report --ai` | Report + Claude's game plan (checks news and the web, simulates moves) | yes |
 | `python -m fbb ask "should I drop X for Y?"` | One question, answered with tool calls | yes |
 | `python -m fbb chat` | Conversation with follow-ups | yes |
-| `python -m fbb json matchup` | Raw structured data (`matchup`, `roster`, `free-agents`, `standings`) | no |
+| `python -m fbb json matchup` | Raw structured data (`matchup`, `roster`, `free-agents`, `moves`, `standings`) | no |
 | `python -m fbb desktop` | Desktop app window (`--install-shortcuts` / `--remove-shortcuts`) | chat only |
 
 ## How the numbers work
@@ -117,9 +117,16 @@ Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest
   slot matching, highest value first), so benched games from a full roster don't count.
   Injury status discounts availability (OUT 0%, DTD 70%, …). Totals add to ESPN's live stats.
   Win probability per category uses a normal approximation of the final margin.
-- **Pickup ranking**: each free agent is simulated against your weakest three roster spots and
-  scored by the change in expected categories won this matchup. A separate list ranks
+- **Pickup ranking**: each free agent is simulated on their next game day (so the drop keeps
+  any games before it) against your weakest three roster spots and scored by the change in expected categories won this matchup. A separate list ranks
   rest-of-season value.
+- **Add/drop plan**: a dated sequence of moves, built day by day. Each day it picks the best
+  free agent who plays that day (into an open roster spot, else for one of your weakest players
+  or a streamer added earlier in the plan), applies it, and searches again on the updated roster.
+  So an empty slot today is filled first (no drop if you have a spot), then tomorrow's move is
+  planned around it; a streamer dropped later still counts for the games in between. Today is
+  skipped once its games tip. Set `MAX_WEEKLY_ADDS` and `ADDS_USED_THIS_WEEK` to cap the plan:
+  it then keeps the fewest adds that capture most of the gain and says when the cap cut moves.
 
 ## Claude settings
 
@@ -140,6 +147,8 @@ your plan, set `CLAUDE_MODEL=claude-sonnet-5-5` or `CLAUDE_EFFORT=medium`.
   `MATCHUP_END_DATE`.
 - Today counts as already played once the first game tips (ESPN's live totals include it).
 - Free agents are the top `FREE_AGENT_POOL` by % owned; the agent can search by position for more.
+- ESPN only reports season-total acquisitions, so adds used this week come from
+  `ADDS_USED_THIS_WEEK`: update it as you make moves (the plan doesn't guess).
 
 ## Tests
 

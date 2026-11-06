@@ -119,6 +119,27 @@ def test_simulate(client):
     assert any("trade target" in n for n in taken["notes"])
 
 
+def test_move_plan():
+    from fakes import streaming_league
+
+    def factory(cfg):
+        data = streaming_league()
+        data.cfg = cfg
+        return Engine(data)
+
+    client = TestClient(make_app(LeagueService(FakeData().cfg, factory=factory)))
+    plan = client.get("/api/moves/plan").json()
+    today, tomorrow = plan["moves"]
+    assert today["is_today"] and today["add"] == "SF Today" and today["drop"] is None
+    assert today["fills"] == ["SF"] and today["add_positions"] == ["SF"]
+    assert not tomorrow["is_today"] and tomorrow["date"] == "2026-10-27" and tomorrow["drop"]
+    assert plan["adds_left"] is None and not plan["capped"]
+    assert plan["win_prob_after"] > plan["win_prob_before"]
+
+    rows = {r["name"]: r for r in client.get("/api/free-agents").json()["rows"]}
+    assert rows["SF Later"]["add_date"] == "2026-10-27"
+
+
 def test_trade(client):
     partner = client.get("/api/teams/2/roster").json()
     res = client.post("/api/trades/evaluate",

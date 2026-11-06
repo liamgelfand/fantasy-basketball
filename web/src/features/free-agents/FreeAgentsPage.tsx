@@ -10,7 +10,8 @@ import { nameColumn, numberColumn, valueColumn } from '../../components/playerCo
 import { QueryState } from '../../components/QueryState'
 import { StatusBadge } from '../../components/StatusBadge'
 import { PlayerLink } from '../player/PlayerLink'
-import { pct, signed } from '../../lib/format'
+import { pct, shortDate, signed } from '../../lib/format'
+import { MovePlanCard } from './MovePlanCard'
 
 const POSITIONS = ['All', 'PG', 'SG', 'SF', 'PF', 'C', 'G', 'F'] as const
 const MEDALS = ['🥇', '🥈', '🥉']
@@ -24,7 +25,11 @@ export function FreeAgentsPage() {
 
   return (
     <Stack gap="lg">
-      <PageHeader title="Free agents" subtitle="Each pickup is simulated against your weakest roster spots" />
+      <PageHeader
+        title="Free agents"
+        subtitle="Each pickup is simulated on its next game day against your weakest roster spots"
+      />
+      <MovePlanCard isPoints={isPoints} />
       <Group justify="space-between" wrap="wrap">
         <SegmentedControl value={position} onChange={(v) => setPosition(v as typeof position)} data={[...POSITIONS]} />
         <Switch
@@ -71,6 +76,12 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
         label: 'Best drop',
         sortValue: (r) => r.best_drop ?? '',
         render: (r) => (r.best_drop ? <Text size="sm">{r.best_drop}</Text> : <Badge variant="light">Open spot</Badge>),
+      },
+      {
+        key: 'add_date',
+        label: 'Add on',
+        sortValue: (r) => r.add_date ?? '',
+        render: (r) => (r.add_date ? shortDate(r.add_date) : '-'),
       },
       valueColumn(),
       numberColumn('games_left', 'G left', (r) => r.games_left),
@@ -139,8 +150,8 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
                 </>
               ) : (
                 'Use your open roster spot'
-              )}{' '}
-              → {pct(r.win_prob_after)} to win
+              )}
+              {r.add_date && <> on {shortDate(r.add_date)}</>} → {pct(r.win_prob_after)} to win
             </Text>
           </Card>
         ))}
