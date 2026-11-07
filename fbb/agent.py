@@ -1,16 +1,66 @@
-"""Claude agent over the league data. Claude calls these tools; we run them locally against the snapshot."""
+"""Claude agent over the league data. Claude calls these tools; we run them locally against the snapshot.
+
+Runs through the Claude Agent SDK, which drives Claude Code with your claude.ai login, so usage
+counts against your Claude plan (Pro/Max) instead of API credits.
+"""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime as dt
 import json
+import os
+import shutil
+import subprocess
 import threading
 from collections.abc import Callable
 from dataclasses import asdict
+from pathlib import Path
 
-import anthropic
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultError,
+    ResultMessage,
+    ToolUseBlock,
+    create_sdk_mcp_server,
+    query,
+    tool,
+)
 
+from .config import ROOT
 from .engine import Engine
 from .report import build_report
+
+# With an API key in the environment, Claude Code bills the API instead of the plan login. The key
+# is only ever read by this agent, so drop it once here (e.g. one left over in .env).
+for _var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+    os.environ.pop(_var, None)
+
+SERVER = "league"
+TOOL_PREFIX = f"mcp__{SERVER}__"
+EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+AGENT_DIR = ROOT / ".fbb" / "agent"  # Claude Code keeps session transcripts per working directory
+RECAP_CHARS = 20_000
+
+
+def subscription_ready() -> bool:
+    """True when Claude Code is installed and logged in, so the assistant can run on the plan."""
+    claude = shutil.which("claude")
+    if claude:
+        try:
+            out = subprocess.run([claude, "auth", "status"], capture_output=True, text=True, timeout=20).stdout
+            return json.loads(out).get("loggedIn") is True
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+    return (Path.home() / ".claude" / ".credentials.json").exists()
+
+
+def _text(content) -> str:
+    """Plain text of a stored message (a string, or API-style content blocks from older chats)."""
+    if isinstance(content, str):
+        return content
+    return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
 
 SYSTEM_PROMPT = """You are a sharp fantasy basketball analyst advising the manager of one team in an ESPN league.
 
@@ -21,8 +71,9 @@ and say which numbers drove the call. Use web search for news ESPN's feed may la
 updates, minutes changes, rotation news, return timelines. Mention dates when you cite news.
 
 Nothing you suggest is executed automatically: the manager makes the moves in the ESPN app. So be
-concrete: exact player names, which day, which slot, who to drop. Before recommending an add/drop,
-run simulate_moves on it. Weigh this week's matchup against rest-of-season value and say which
+concrete: exact player names, which day, which slot, who to drop. For streaming, start from
+move_plan: an empty lineup slot today is production lost for good once games tip. Before
+recommending an add/drop, run simulate_moves on it. Weigh this week's matchup against rest-of-season value and say which
 one a recommendation is for. Respect acquisition limits and punted categories.
 
 Today is {today}. League: {league} ({scoring}). The manager's team: {team}."""
@@ -33,12 +84,13 @@ def _json(obj) -> str:
 
 
 class FantasyAgent:
-    def __init__(self, engine: Engine, client: anthropic.Anthropic | None = None):
+    def __init__(self, engine: Engine, query_fn=query):
         self.engine = engine
         self.data = engine.data
         self.cfg = engine.cfg
-        self.client = client or anthropic.Anthropic()
+        self._query = query_fn  # injectable for tests
         self.messages: list[dict] = []
+        self.session_id: str | None = None  # Claude Code session to resume for follow-ups
         self.tools, self.handlers = self._build_tools()
         self.system = SYSTEM_PROMPT.format(
             today=dt.date.today().isoformat(),
@@ -68,6 +120,7 @@ class FantasyAgent:
                 "acquisition_rules": d.acquisition_rules,
                 "my_team": {"name": d.my_team.name, "record": d.my_team.record, "standing": d.my_team.standing,
                             "acquisitions_this_season": d.my_team.acquisitions},
+                "adds_left_this_week": e.adds_left,  # league limit - adds in ESPN's activity feed; None = no limit or unread
                 "punted_categories": sorted(self.cfg.punt_categories),
                 "stat_window_in_use": self.cfg.stat_window,
                 "today_scoring_period": d.today_sp, "todays_games_started": d.today_started(),
@@ -120,6 +173,9 @@ class FantasyAgent:
             result["notes"] += e.ownership_notes(adds)
             return result
 
+        def move_plan():
+            return e.move_plan_summary()
+
         def evaluate_trade(give: list[str], receive: list[str]):
             gives, m1 = self._resolve_players(give)
             gets, m2 = self._resolve_players(receive)
@@ -138,7 +194,7 @@ class FantasyAgent:
             return build_report(e)
 
         handlers = {f.__name__: f for f in (league_overview, my_roster, matchup_projection, team_roster, free_agents,
-                                            player_details, simulate_moves, evaluate_trade, standings,
+                                            player_details, simulate_moves, move_plan, evaluate_trade, standings,
                                             recent_activity, full_report)}
         names = {"type": "array", "items": {"type": "string"}}
         schema = lambda props=None, req=None: {"type": "object", "properties": props or {}, "required": req or []}
@@ -154,14 +210,14 @@ class FantasyAgent:
              "input_schema": schema({"name": {"type": "string"}, "include_news": {"type": "boolean"}}, ["name"])},
             {"name": "simulate_moves", "description": "Re-project the current matchup after adding and/or dropping players. Returns expected categories won and win probability before and after, per-category changes, and rest-of-season value change.",
              "input_schema": schema({"add": names, "drop": names})},
+            {"name": "move_plan", "description": "Dated add/drop sequence for the rest of the matchup, built day by day: today's moves first (e.g. a free agent who plays today filling an empty lineup slot, no drop needed if a roster spot is open), then each later day's best move on the roster left by the earlier ones. Respects the league's weekly add limit, counting this week's adds from ESPN's activity feed. Today is skipped once its games have tipped.",
+             "input_schema": schema()},
             {"name": "evaluate_trade", "description": "Evaluate a trade from my side: per-category z-score and per-game changes, rest-of-season games, and the effect on this matchup.",
              "input_schema": schema({"give": names, "receive": names}, ["give", "receive"])},
             {"name": "standings", "description": "League standings.", "input_schema": schema()},
             {"name": "recent_activity", "description": "Recent league adds, drops and trades.", "input_schema": schema({"limit": {"type": "integer"}})},
             {"name": "full_report", "description": "The full deterministic markdown report (matchup, roster, pickups, standings). Good starting point for broad questions.", "input_schema": schema()},
         ]
-        if self.cfg.web_search:
-            tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 6})
         return tools, handlers
 
     def _run_tool(self, name: str, args: dict) -> tuple[str, bool]:
@@ -172,70 +228,117 @@ class FantasyAgent:
         except Exception as ex:  # report tool failures to Claude instead of crashing the loop
             return f"Tool {name} failed: {type(ex).__name__}: {ex}", True
 
+    def _server(self):
+        """The league tools as an in-process MCP server that Claude Code calls into."""
+        def wrap(name: str):
+            async def run(args: dict) -> dict:
+                text, is_error = await asyncio.to_thread(self._run_tool, name, dict(args or {}))
+                return {"content": [{"type": "text", "text": text}], "is_error": is_error}
+            return run
+
+        sdk_tools = [tool(t["name"], t["description"], t["input_schema"])(wrap(t["name"])) for t in self.tools]
+        return create_sdk_mcp_server(SERVER, tools=sdk_tools)
+
+    def _options(self, max_turns: int) -> ClaudeAgentOptions:
+        builtin = ["WebSearch"] if self.cfg.web_search else []
+        AGENT_DIR.mkdir(parents=True, exist_ok=True)
+        return ClaudeAgentOptions(
+            system_prompt=self.system,
+            model=self.cfg.model,
+            effort=self.cfg.effort if self.cfg.effort in EFFORTS else None,
+            tools=builtin,  # no file, shell, or other Claude Code tools: league tools and web search only
+            allowed_tools=[TOOL_PREFIX + t["name"] for t in self.tools] + builtin,
+            mcp_servers={SERVER: self._server()},
+            setting_sources=[],  # ignore any CLAUDE.md or settings on this machine
+            cwd=AGENT_DIR,
+            max_turns=max_turns,
+            resume=self.session_id,
+        )
+
     # ---------- history ----------
 
     def export_messages(self) -> list[dict]:
-        """History as plain JSON-able dicts. Content blocks keep the exact fields the API sent,
-        so thinking blocks replay unchanged after a reload."""
-        def block(b):
-            return b.model_dump(mode="json", exclude_unset=True) if hasattr(b, "model_dump") else b
-        return [{"role": m["role"], "content": m["content"] if isinstance(m["content"], str)
-                 else [block(b) for b in m["content"]]} for m in self.messages]
+        """History as plain JSON-able dicts: the questions and Claude's answers."""
+        return [dict(m) for m in self.messages]
 
     def import_messages(self, messages: list[dict]) -> None:
+        """Restore a saved chat. The next question carries a recap, since a restored chat has no live session."""
         self.messages = list(messages)
+        self.session_id = None
+
+    def _recap(self) -> str:
+        lines = [f"{'Manager' if m['role'] == 'user' else 'You'}: {_text(m['content'])}"
+                 for m in self.messages if _text(m["content"]).strip()]
+        return "\n\n".join(lines)[-RECAP_CHARS:]
 
     # ---------- loop ----------
 
     def ask(self, question: str, on_tool: Callable[[str, dict], None] | None = None, max_turns: int = 25,
             cancel: threading.Event | None = None) -> str:
-        """Send one user message, run tools until Claude answers, and keep the history for follow-ups.
+        """Send one user message, let Claude run tools until it answers, and keep the history for follow-ups.
 
-        `cancel` is checked before each API round. The history stays valid when it trips: it only
-        ever ends on a user turn (the question or a full set of tool results), never mid tool call.
+        Setting `cancel` stops the run (and the Claude Code process) promptly. A stopped question stays
+        in the history without an answer.
         """
+        prompt = question
+        if self.session_id is None and self.messages:
+            prompt = f"Our conversation so far:\n\n{self._recap()}\n\n---\n\nNew question:\n{question}"
         self.messages.append({"role": "user", "content": question})
-        for _ in range(max_turns):
+        if cancel is not None and cancel.is_set():
+            return "Stopped."
+        answer = asyncio.run(self._run(prompt, on_tool, max_turns, cancel))
+        if answer is None:
+            return "Stopped."
+        self.messages.append({"role": "assistant", "content": answer})
+        return answer
+
+    async def _run(self, prompt: str, on_tool, max_turns: int, cancel: threading.Event | None) -> str | None:
+        result: ResultMessage | None = None
+
+        async def consume() -> None:
+            nonlocal result
+            try:
+                async for message in self._query(prompt=prompt, options=self._options(max_turns)):
+                    if isinstance(message, AssistantMessage) and on_tool:
+                        for block in message.content:
+                            if isinstance(block, ToolUseBlock):
+                                name = block.name.removeprefix(TOOL_PREFIX)
+                                on_tool("web_search" if name == "WebSearch" else name, dict(block.input or {}))
+                    elif isinstance(message, ResultMessage):
+                        result = message
+            except ResultError:
+                # Claude Code exits with an error after an error result (turn limit, usage limit, ...);
+                # the result it already sent says what happened, so handle that below instead.
+                if result is None or not result.is_error:
+                    raise
+
+        job = asyncio.create_task(consume())
+        while not job.done():
             if cancel is not None and cancel.is_set():
-                return "Stopped."
-            response = self.client.beta.messages.create(
-                model=self.cfg.model,
-                max_tokens=16000,
-                system=self.system,
-                tools=self.tools,
-                messages=self.messages,
-                thinking={"type": "adaptive"},
-                output_config={"effort": self.cfg.effort},
-                cache_control={"type": "ephemeral"},
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
-            )
-            self.messages.append({"role": "assistant", "content": response.content})
+                job.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await job
+                return None
+            await asyncio.wait({job}, timeout=0.2)
+        job.result()  # re-raise a failure from the Claude Code process
 
-            if response.stop_reason == "refusal":
-                return "Claude declined to answer this request."
-            if response.stop_reason == "pause_turn":  # server-side web search still running
-                continue
-            if response.stop_reason != "tool_use":
-                return "\n".join(b.text for b in response.content if b.type == "text").strip()
-
-            results = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                if on_tool:
-                    on_tool(block.name, block.input)
-                text, is_error = self._run_tool(block.name, dict(block.input or {}))
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": text, "is_error": is_error})
-            self.messages.append({"role": "user", "content": results})
-        return "Stopped: too many tool rounds without a final answer."
+        if result is None:
+            raise RuntimeError("Claude Code ended without an answer")
+        self.session_id = result.session_id
+        if result.stop_reason == "refusal":
+            return "Claude declined to answer this request."
+        if result.subtype == "error_max_turns":
+            return "Stopped: too many tool rounds without a final answer."
+        if result.is_error:
+            raise RuntimeError("; ".join(result.errors or []) or f"Claude Code error ({result.subtype})")
+        return (result.result or "").strip()
 
 
 AI_REPORT_PROMPT = """Write my game plan for this matchup and the week ahead.
 
 Start from full_report, then dig in where it matters: check news (and the web) for any injured
 or questionable players on my roster, my opponent's roster, and the top pickup candidates;
-simulate the adds and drops you're considering; check if any trade target fits my category needs.
+check move_plan and simulate the adds and drops you're considering; check if any trade target fits my category needs.
 
 Output markdown with these sections:
 1. **Bottom line**: 2-3 sentences on where the matchup stands and the single most important move.

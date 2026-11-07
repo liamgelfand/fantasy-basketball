@@ -109,6 +109,7 @@ export interface FreeAgentRow extends PlayerRow {
   matchup_gain: number
   win_prob_after: number
   best_drop: string | null
+  add_date: string | null
   low_sample: boolean
 }
 
@@ -150,6 +151,32 @@ export interface MoveResult {
   season_value_delta: number
   category_deltas: Record<string, number>
   projected_delta: Record<string, number>
+  notes: string[]
+}
+
+export interface PlannedMove {
+  date: string | null
+  is_today: boolean
+  add_id: number
+  add: string
+  add_positions: string[]
+  drop: string | null
+  fills: string[]
+  matchup_gain: number
+  win_prob_after: number
+  notes: string[]
+}
+
+export interface MovePlan {
+  gain_label: string
+  moves: PlannedMove[]
+  total_gain: number
+  win_prob_before: number
+  win_prob_after: number
+  weekly_add_limit: number | null
+  adds_used_this_week: number | null
+  adds_left: number | null
+  capped: boolean
   notes: string[]
 }
 

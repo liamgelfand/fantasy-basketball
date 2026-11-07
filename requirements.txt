@@ -1,8 +1,9 @@
 espn-api==1.0.1
-anthropic==2.3.0
+claude-agent-sdk==0.2.174  # runs Claude through Claude Code on your claude.ai plan
 python-dotenv>=1.0
 fastapi==0.162.0
 uvicorn==0.54.0
+pywebview==6.2.1; sys_platform == "win32"  # desktop app window
 
 # dev / test
 pytest>=8

@@ -91,9 +91,21 @@ def build_report(engine: Engine) -> str:
     add("\n_Value = sum of per-game z-scores vs all rostered players (punted cats excluded). 🔥/🧊 = last 15 days well above/below season._\n")
 
     # ---- pickups
+    gain_label = "Proj FPTS +" if d.is_points else "Exp cats +"
+    if proj.opponent:
+        plan = engine.move_plan
+        add("## Add/drop plan by day")
+        rows = [[_when(engine, m), m.add.name, "/".join(_pos(m.add)), m.drop.name if m.drop else "(open spot)",
+                 "/".join(m.fills) or "-", f"+{m.gain:.1f}" if d.is_points else f"+{m.gain:.2f}",
+                 _pct(m.result.win_prob_after)] for m in plan.moves]
+        add(_table(["Day", "Add", "Pos", "Drop", "Fills empty", gain_label, "Win % after"], rows)
+            if rows else "No add/drop improves this matchup enough to recommend.")
+        add("\n_Each move is searched on the roster left by the moves before it._")
+        add("".join(f"\n_{n}_" for n in plan.notes))
+        add("")
+
     add("## Best pickups for this matchup")
     rows = []
-    gain_label = "Proj FPTS +" if d.is_points else "Exp cats +"
     for r in engine.top_streamers(8):
         res = r["result"]
         gain = engine.matchup_gain(res)
@@ -136,15 +148,24 @@ def build_report(engine: Engine) -> str:
         add(_table(["When", "Team", "Action", "Player"], [[a["date"], a["team"], a["action"], a["player"]] for a in activity]))
         add("")
 
-    rules = d.acquisition_rules
-    if rules.get("matchup_acquisition_limit"):
-        add(f"_Acquisitions: limit {rules['matchup_acquisition_limit']} per matchup; you have made {me.acquisitions} this season._")
+    limit, used, _ = engine.weekly_adds
+    if limit:
+        week = f"{used} used this week" if used is not None else "this week's count unavailable"
+        add(f"_Acquisitions: limit {limit} per matchup ({week}); you have made {me.acquisitions} this season._")
     return "\n".join(lines)
 
 
 def _with(p, window_stats):
     from .espn import PlayerInfo
     return PlayerInfo(**{**p.__dict__, "per_game": window_stats})
+
+
+def _when(engine: Engine, m) -> str:
+    if m.sp == engine.data.today_sp:
+        return "Today"
+    if m.sp == engine.data.today_sp + 1:
+        return "Tomorrow"
+    return f"{m.date:%a %m/%d}" if m.date else "Later"
 
 
 def _pos(p) -> list[str]:
@@ -159,17 +180,16 @@ def _action_items(engine: Engine) -> list[str]:
                      + (f" in place of {', '.join(lc['bench'])}." if lc["bench"] else " (open starting slots)."))
     items += [f"Move **{n}** to IR to free a roster spot (if your IR slot is open)." for n in lc["ir_candidates"]]
 
-    best = engine.top_streamers(1)
     is_points = engine.data.is_points
-    if best and engine.matchup_gain(best[0]["result"]) >= (15.0 if is_points else 0.25):
-        r = best[0]
-        gain = engine.matchup_gain(r["result"])
-        drop = f"drop **{r['drop'].name}**" if r["drop"] else "use your open roster spot"
-        items.append(f"Add **{r['player'].name}** ({r['games_left']} games left), {drop}: "
-                     + (f"+{gain:.0f} projected fantasy points" if is_points else f"+{gain:.2f} expected categories")
-                     + f", win probability {_pct(r['result'].win_prob_before)} → {_pct(r['result'].win_prob_after)}.")
+    planned = [m for m in engine.move_plan.moves if m.gain >= (5.0 if is_points else 0.1)]
+    for m in planned:
+        drop = f"drop **{m.drop.name}**" if m.drop else "use your open roster spot"
+        fills = f" (fills the empty {'/'.join(m.fills)} slot)" if m.fills else ""
+        items.append(f"{_when(engine, m)}: add **{m.add.name}**{fills}, {drop}: "
+                     + (f"+{m.gain:.0f} projected fantasy points" if is_points else f"+{m.gain:.2f} expected categories")
+                     + f", win probability → {_pct(m.result.win_prob_after)}.")
     season = engine.top_season_adds(1)
-    if season and season[0]["value_over_worst"] >= 1.5 and (not best or season[0]["player"].id != best[0]["player"].id):
+    if season and season[0]["value_over_worst"] >= 1.5 and all(season[0]["player"].id != m.add.id for m in planned):
         r = season[0]
         items.append(f"Long-term upgrade: **{r['player'].name}** is worth {r['value_over_worst']:+.1f} z over "
                      f"**{engine.drop_candidates[0].name}**.")

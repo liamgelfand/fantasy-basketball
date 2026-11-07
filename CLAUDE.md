@@ -8,6 +8,7 @@ Web client in `web/` (Node 20+): run `npm run typecheck && npm run lint && npm t
 - `fbb/analysis.py`: pure math (z-score valuation, daily lineup matching, matchup projection, move simulation). No I/O.
 - `fbb/engine.py`: combines data + analysis (FA board, drop candidates, lineup check, trade eval, JSON summaries).
 - `fbb/report.py`: deterministic markdown report. `fbb/agent.py`: Claude tool loop over Engine methods.
+- `fbb/desktop.py`: desktop shortcut target (`pythonw -m fbb desktop`): pywebview window over the API, single instance, rebuilds `web/dist` when stale. Logs to `.fbb/logs/`.
 - `fbb/api/`: FastAPI. Routes stay thin; Engine -> JSON mapping lives in `presenters.py`, the contract in `schemas.py`.
 - `web/`: React + TS (Mantine, TanStack Query). `src/api/types.ts` mirrors `schemas.py`: change both together.
 - `tests/fakes.py`: `FakeData` duck-types LeagueData; extend it when Engine needs new data. `tests/test_api.py` covers HTTP.
