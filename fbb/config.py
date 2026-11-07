@@ -44,9 +44,6 @@ class Config:
     matchup_end_date: dt.date | None = None
     matchup_end_weekday: int = 6  # 0=Mon ... 6=Sun
     free_agent_pool: int = 75
-    # ESPN only reports season-total acquisitions, so this week's adds come from the user.
-    max_weekly_adds: int | None = None  # None = no cap on the planned adds
-    adds_used_this_week: int = 0
     web_search: bool = True
     reports_dir: Path = ROOT / "reports"
 
@@ -76,7 +73,5 @@ def load_config() -> Config:
         matchup_end_date=dt.date.fromisoformat(end_date) if end_date else None,
         matchup_end_weekday=_opt_int("MATCHUP_END_WEEKDAY") if _opt_int("MATCHUP_END_WEEKDAY") is not None else 6,
         free_agent_pool=_opt_int("FREE_AGENT_POOL") or 75,
-        max_weekly_adds=_opt_int("MAX_WEEKLY_ADDS"),
-        adds_used_this_week=_opt_int("ADDS_USED_THIS_WEEK") or 0,
         web_search=os.getenv("CLAUDE_WEB_SEARCH", "true").strip().lower() not in {"0", "false", "no"},
     )

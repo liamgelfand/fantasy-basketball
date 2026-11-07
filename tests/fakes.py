@@ -1,15 +1,22 @@
 """A synthetic league that duck-types LeagueData, shared by the offline tests."""
 import datetime as dt
 import random
+from types import SimpleNamespace
 
 from fbb.config import Config
-from fbb.espn import Category, PlayerInfo, TeamInfo
+from fbb.espn import Category, PlayerInfo, TeamInfo, count_adds
 
 CATS = [Category(s, s == "TO") for s in ("PTS", "REB", "AST", "STL", "BLK", "3PM", "FG%", "FT%", "TO")]
 SLOTS = ["PG", "SG", "SF", "PF", "C", "G", "F", "UT", "UT", "UT"]
 START = dt.date(2026, 10, 26)
 POSITIONS = [["PG", "G", "UT"], ["SG", "G", "UT"], ["SF", "F", "UT"], ["PF", "F", "UT"], ["C", "UT"],
              ["PG", "SG", "G", "UT"], ["PF", "C", "F", "UT"]]
+
+
+def activity(when: dt.datetime, team_id: int, action: str, player: str = "Someone"):
+    """One espn_api Activity: ms epoch date, actions of (Team, action, Player, position)."""
+    team = SimpleNamespace(team_id=team_id, team_name=f"Team {team_id}")
+    return SimpleNamespace(date=int(when.timestamp() * 1000), actions=[(team, action, SimpleNamespace(name=player), "")])
 
 
 def make_player(i: int, rng: random.Random, slot: str = "BE", status: str = "ACTIVE") -> PlayerInfo:
@@ -43,12 +50,21 @@ class FakeData:
         self.teams = {}
         for tid in (1, 2, 3, 4):
             roster = [make_player(next(pid), rng, slot=SLOTS[k] if k < 10 else "BE") for k in range(13)]
-            self.teams[tid] = TeamInfo(tid, f"Team {tid}", f"T{tid}", 3, 2, 0, tid, 0.0, 1, [], roster)
+            self.teams[tid] = TeamInfo(tid, f"Team {tid}", f"T{tid}", 3, 2, 0, tid, 0.0, 10, [], roster)
         self.teams[1].roster[-1].injury_status = "OUT"
         self._fas = [make_player(next(pid), rng) for _ in range(30)]
         self.my_team_id = 1
         self.matchup_periods = ([5, 6], [7, 8, 9, 10, 11])
         self.acquisition_rules = {"matchup_acquisition_limit": 4}
+        # Newest first, like ESPN. The matchup started at sp 5 = 2026-10-24: one add of mine counts.
+        self.activity = [
+            activity(dt.datetime(2026, 10, 25, 22), 1, "TRADED"),
+            activity(dt.datetime(2026, 10, 25, 12), 2, "FA ADDED"),
+            activity(dt.datetime(2026, 10, 25, 10), 1, "DROPPED"),
+            activity(dt.datetime(2026, 10, 24, 9), 1, "WAIVER ADDED"),
+            activity(dt.datetime(2026, 10, 23, 20), 1, "FA ADDED"),  # last matchup
+        ]
+        self.activity_error: Exception | None = None
 
     my_team = property(lambda self: self.teams[1])
     rostered_players = property(lambda self: [p for t in self.teams.values() for p in t.roster])
@@ -87,6 +103,11 @@ class FakeData:
 
     def standings(self):
         return list(self.teams.values())
+
+    def adds_used_this_matchup(self):
+        if self.activity_error:
+            raise self.activity_error
+        return count_adds(self.activity, self.my_team_id, dt.datetime.combine(self.sp_date(5), dt.time()))[0]
 
     def recent_activity(self, size=15):
         return [{"date": "2026-10-25 10:00", "team": "Team 2", "action": "FA ADDED", "player": "Player 99"}]

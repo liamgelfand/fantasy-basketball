@@ -125,8 +125,10 @@ Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest
   or a streamer added earlier in the plan), applies it, and searches again on the updated roster.
   So an empty slot today is filled first (no drop if you have a spot), then tomorrow's move is
   planned around it; a streamer dropped later still counts for the games in between. Today is
-  skipped once its games tip. Set `MAX_WEEKLY_ADDS` and `ADDS_USED_THIS_WEEK` to cap the plan:
-  it then keeps the fewest adds that capture most of the gain and says when the cap cut moves.
+  skipped once its games tip. If your league has a weekly add limit, the plan is capped to the
+  adds you have left: the limit comes from your league settings and this week's adds are counted
+  from ESPN's activity feed, so there's nothing to enter. It keeps the fewest adds that capture
+  most of the gain and says when the cap cut moves.
 
 ## Claude settings
 
@@ -147,8 +149,11 @@ your plan, set `CLAUDE_MODEL=claude-sonnet-5-5` or `CLAUDE_EFFORT=medium`.
   `MATCHUP_END_DATE`.
 - Today counts as already played once the first game tips (ESPN's live totals include it).
 - Free agents are the top `FREE_AGENT_POOL` by % owned; the agent can search by position for more.
-- ESPN only reports season-total acquisitions, so adds used this week come from
-  `ADDS_USED_THIS_WEEK`: update it as you make moves (the plan doesn't guess).
+- Adds used this week are your FA adds and waiver claims in ESPN's activity feed since the first
+  tip of the day before the matchup starts (later adds take effect in the new matchup), or local
+  midnight of its first day if there were no games the day before. If the feed can't be read, the
+  plan isn't capped and says so.
+- Without a league add limit, the plan shows at most about one add per day left.
 
 ## Tests
 

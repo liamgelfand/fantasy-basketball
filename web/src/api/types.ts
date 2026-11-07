@@ -173,6 +173,8 @@ export interface MovePlan {
   total_gain: number
   win_prob_before: number
   win_prob_after: number
+  weekly_add_limit: number | null
+  adds_used_this_week: number | null
   adds_left: number | null
   capped: boolean
   notes: string[]

@@ -159,12 +159,38 @@ class Engine:
     def top_season_adds(self, n: int = 10) -> list[dict]:
         return sorted(self.free_agent_board, key=lambda r: r["value"], reverse=True)[:n]
 
+    @cached_property
+    def weekly_adds(self) -> tuple[int | None, int | None, list[str]]:
+        """(league add limit per matchup, adds I've used this matchup, notes), read from ESPN once per snapshot.
+
+        The limit is None when the league has none (ESPN reports 0, -1 or nothing); the count is None
+        when there's no limit to count against or the activity feed couldn't be read.
+        """
+        try:
+            limit = self.data.acquisition_rules.get("matchup_acquisition_limit")
+        except Exception as e:
+            return None, None, [f"Couldn't read the weekly add limit from ESPN ({type(e).__name__}), so the plan isn't capped."]
+        if not isinstance(limit, int) or limit <= 0:
+            return None, None, []
+        try:
+            used = self.data.adds_used_this_matchup()
+        except Exception as e:
+            return limit, None, [f"Your league allows {limit} adds per matchup, but this week's adds couldn't be "
+                                 f"read from ESPN ({type(e).__name__}), so the plan isn't capped. Check your "
+                                 "adds left before making them."]
+        notes = []
+        if used > self.data.my_team.acquisitions:  # season total from ESPN's transaction counter
+            notes.append(f"ESPN's activity feed shows {used} adds this week but only "
+                         f"{self.data.my_team.acquisitions} this season; the weekly count may be off.")
+        return limit, used, notes
+
     @property
     def adds_left(self) -> int | None:
-        """Adds left this week per MAX_WEEKLY_ADDS / ADDS_USED_THIS_WEEK; None when no limit is set."""
-        if self.cfg.max_weekly_adds is None:
+        """League add limit per matchup minus adds used this matchup; None when there's no limit or it couldn't be read."""
+        limit, used, _ = self.weekly_adds
+        if limit is None or used is None:
             return None
-        return max(0, self.cfg.max_weekly_adds - self.cfg.adds_used_this_week)
+        return max(0, limit - used)
 
     @cached_property
     def move_plan(self) -> MovePlan:
@@ -172,21 +198,26 @@ class Engine:
         proj = self.projection
         if proj.opponent is None:
             return MovePlan([], proj, proj, self.adds_left, notes=["No active matchup to plan for."])
+        # No league limit: still keep it to about one add per day left, each worth making.
+        max_adds = max(1, len(self.move_days))
         plan = plan_moves(self.data, proj, self.data.my_team.roster, self.data.free_agents(), self.matchup_now[1],
                           self.valuer, self.rank, self.data.roster_size, self.move_days, adds_left=self.adds_left,
-                          min_gain=1.0 if self.data.is_points else 0.02)
+                          min_gain=1.0 if self.data.is_points else 0.05, max_adds=max_adds)
         if self.data.today_started():
             plan.notes.append("Today's games have tipped, so the plan starts tomorrow.")
-        limit = self.data.acquisition_rules.get("matchup_acquisition_limit")
-        if self.adds_left is None and limit:
-            plan.notes.append(f"Your league allows {limit} adds per matchup. Set MAX_WEEKLY_ADDS and "
-                              "ADDS_USED_THIS_WEEK in .env to cap this plan to what you have left.")
+        if self.adds_left is None and len(plan.moves) >= max_adds:
+            plan.notes.append(f"Showing the best {max_adds} adds (about one per day left); more small "
+                              "streaming moves may still help a little.")
+        plan.notes.extend(self.weekly_adds[2])
         return plan
 
     def move_plan_summary(self) -> dict:
         plan = self.move_plan
         today = self.data.today_sp
+        limit, used, _ = self.weekly_adds
         return {
+            "weekly_add_limit": limit,
+            "adds_used_this_week": used,
             "adds_left_this_week": plan.adds_left,
             "capped_by_weekly_limit": plan.capped,
             "matchup_gain_total": round(plan.gain, 3),

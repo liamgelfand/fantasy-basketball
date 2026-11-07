@@ -38,6 +38,28 @@ WINDOW_KEYS = {
 # Season stats are trusted more as games accumulate; below this many games they
 # are blended with ESPN's projection (weight = gp / (gp + BLEND_GAMES)).
 BLEND_GAMES = 10
+# espn_api ACTIVITY_MAP action strings that put a player on the roster (178 = FA, 180 = waiver claim).
+# DROPPED, TRADED and MOVED don't use up an add.
+ADD_ACTIONS = {"FA ADDED", "WAIVER ADDED"}
+ACTIVITY_PAGE = 50
+ACTIVITY_MAX_PAGES = 20
+
+
+def count_adds(activities, team_id: int, since: dt.datetime) -> tuple[int, bool]:
+    """Adds by `team_id` in espn_api Activity objects dated at or after `since` (naive local time).
+
+    Returns (adds, reached_older): `reached_older` is True once an entry predates `since`, so a
+    newest-first feed needs no further pages. Teams are matched by id: names aren't unique or stable.
+    """
+    since_ms = since.timestamp() * 1000  # naive datetime -> local time, same as the ms epoch in act.date
+    adds, older = 0, False
+    for act in activities:
+        if act.date < since_ms:
+            older = True
+            continue
+        adds += sum(1 for team, action, _player, _pos in act.actions
+                    if action in ADD_ACTIONS and getattr(team, "team_id", None) == team_id)
+    return adds, older
 
 
 @dataclass
@@ -235,6 +257,42 @@ class LeagueData:
 
         cutoff = self.today_sp + (1 if self.today_started() else 0)
         return [d for d in days if d < cutoff], [d for d in days if d >= cutoff]
+
+    @property
+    def matchup_start(self) -> dt.datetime | None:
+        """When adds start counting toward the current matchup's limit.
+
+        An add made after a day's first game has tipped takes effect the next day, so adds made
+        once the previous scoring period's games started count toward this matchup: the cutoff is
+        that first tip. Without a game that day, it's local midnight of the matchup's first day.
+        Same convention as sp_date: naive local time, as are the converted ESPN ms timestamps.
+        """
+        elapsed, remaining = self.matchup_periods
+        if not elapsed and not remaining:
+            return None
+        first_sp = min(elapsed + remaining)
+        if first_sp - 1 in self.sp_start:
+            return self.sp_start[first_sp - 1]
+        first = self.sp_date(first_sp)
+        return dt.datetime.combine(first, dt.time()) if first else None
+
+    def adds_used_this_matchup(self) -> int:
+        """My FA adds and waiver claims since the matchup started, read from the league activity feed.
+
+        Pages the newest-first feed until an entry predates the matchup start. Raises if the start
+        is unknown or the feed is longer than ACTIVITY_MAX_PAGES pages, rather than undercounting.
+        """
+        since = self.matchup_start
+        if since is None:
+            raise ValueError("no current matchup")
+        used = 0
+        for page in range(ACTIVITY_MAX_PAGES):
+            acts = self.league.recent_activity(size=ACTIVITY_PAGE, offset=page * ACTIVITY_PAGE)
+            n, done = count_adds(acts, self.my_team_id, since)
+            used += n
+            if done or len(acts) < ACTIVITY_PAGE:
+                return used
+        raise RuntimeError(f"activity feed has more than {ACTIVITY_PAGE * ACTIVITY_MAX_PAGES} entries this matchup")
 
     def rest_of_season_periods(self) -> list[int]:
         start = self.today_sp + (1 if self.today_started() else 0)

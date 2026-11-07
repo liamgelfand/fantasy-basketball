@@ -133,7 +133,8 @@ def test_move_plan():
     assert today["is_today"] and today["add"] == "SF Today" and today["drop"] is None
     assert today["fills"] == ["SF"] and today["add_positions"] == ["SF"]
     assert not tomorrow["is_today"] and tomorrow["date"] == "2026-10-27" and tomorrow["drop"]
-    assert plan["adds_left"] is None and not plan["capped"]
+    assert (plan["weekly_add_limit"], plan["adds_used_this_week"], plan["adds_left"]) == (4, 1, 3)
+    assert not plan["capped"]
     assert plan["win_prob_after"] > plan["win_prob_before"]
 
     rows = {r["name"]: r for r in client.get("/api/free-agents").json()["rows"]}
