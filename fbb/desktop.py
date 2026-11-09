@@ -407,8 +407,26 @@ def _setup_logging() -> None:
                                                      exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
 
 
+def _hide_console_for_children() -> None:
+    """Give this console-less process one hidden console for its children to share.
+
+    Windows opens a visible console window for every console program (the Claude Code CLI the
+    assistant drives, `claude auth status`, ...) started from a process that has none, as pythonw
+    does. If a hidden console already exists they inherit it instead, whoever spawns them.
+    """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetConsoleWindow.restype = ctypes.c_void_p
+    if kernel32.GetConsoleWindow() or not kernel32.AllocConsole():
+        return  # launched from a console already (python -m fbb desktop), or no console to be had
+    hwnd = kernel32.GetConsoleWindow()
+    if hwnd:
+        ctypes.WinDLL("user32").ShowWindow(ctypes.c_void_p(hwnd), 0)  # SW_HIDE
+
+
 def run() -> None:
     _setup_logging()
+    if sys.platform == "win32":
+        _hide_console_for_children()
     with SingleInstance() as instance:
         if not instance.acquired:
             if focus_existing_window():

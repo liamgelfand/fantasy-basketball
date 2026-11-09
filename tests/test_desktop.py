@@ -167,3 +167,19 @@ def test_single_instance_waits_for_first_copy_to_exit():
     released.set()
     thread.join(5)
     assert results == [False, False, True]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="console windows are a Windows thing")
+def test_subscription_check_opens_no_console_window(monkeypatch):
+    from fbb import agent
+
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"loggedIn": true}', stderr="")
+
+    monkeypatch.setattr(agent.shutil, "which", lambda _name: "claude")
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    assert agent.subscription_ready() is True
+    assert seen["creationflags"] & subprocess.CREATE_NO_WINDOW
