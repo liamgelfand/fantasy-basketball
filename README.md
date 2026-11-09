@@ -35,7 +35,7 @@ with no console and no browser tab:
 - It rebuilds the web client on launch whenever anything in `web/` changed, so it's never stale.
 - Only one copy runs: opening it again brings the existing window to the front.
 - Closing the window stops the server.
-- It serves on `127.0.0.1:8765`, so `python -m fbb serve` on :8000 can run alongside it.
+- It serves on `127.0.0.1:8777`, so `python -m fbb serve` on :8000 can run alongside it.
 - If it can't start (missing `.env` value, build error), the window says why. Logs are in
   `.fbb/logs/desktop.log`.
 

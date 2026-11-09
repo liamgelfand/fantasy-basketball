@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import asdict
@@ -36,6 +37,25 @@ from .report import build_report
 # is only ever read by this agent, so drop it once here (e.g. one left over in .env).
 for _var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
     os.environ.pop(_var, None)
+
+
+def _hide_child_consoles() -> None:
+    """Under pythonw, every console child (the SDK's `claude` CLI, `claude auth status`) pops up its own
+    console window. The SDK spawns via anyio with no creationflags, so add CREATE_NO_WINDOW to all Popens."""
+    if getattr(subprocess.Popen.__init__, "_fbb_no_window", False):
+        return
+    original = subprocess.Popen.__init__
+
+    def __init__(self, *args, **kwargs):
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+        original(self, *args, **kwargs)
+
+    __init__._fbb_no_window = True
+    subprocess.Popen.__init__ = __init__
+
+
+if sys.platform == "win32":
+    _hide_child_consoles()
 
 SERVER = "league"
 TOOL_PREFIX = f"mcp__{SERVER}__"

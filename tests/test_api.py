@@ -1,5 +1,7 @@
 """HTTP API tests against the synthetic league: no ESPN or Claude calls."""
 import json
+import subprocess
+import sys
 
 import pytest
 from fakes import FakeData
@@ -244,6 +246,30 @@ def test_agent_stops_when_cancelled():
     cancel.set()
     assert agent.ask("hi", cancel=cancel) == "Stopped."
     assert agent.export_messages() == [{"role": "user", "content": "hi"}]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="CREATE_NO_WINDOW is Windows-only")
+def test_agent_hides_child_consoles(monkeypatch):
+    from fbb import agent
+
+    assert getattr(subprocess.Popen.__init__, "_fbb_no_window", False), "not applied at import"
+
+    seen = {}
+
+    def record(self, *args, **kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr(subprocess.Popen, "__init__", record)
+    agent._hide_child_consoles()
+
+    class Popen(subprocess.Popen):
+        def __del__(self):  # never really started
+            pass
+
+    Popen(["claude"])
+    assert seen["creationflags"] == subprocess.CREATE_NO_WINDOW
+    Popen(["claude"], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+    assert seen["creationflags"] == subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
 
 
 def test_agent_runs_through_claude_code_and_resumes():
