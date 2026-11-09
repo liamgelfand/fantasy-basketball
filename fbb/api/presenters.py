@@ -205,6 +205,8 @@ def move_plan(engine: Engine) -> s.MovePlanOut:
         total_gain=round(plan.gain, 3),
         win_prob_before=round(plan.before.win_matchup_prob, 3),
         win_prob_after=round(plan.after.win_matchup_prob, 3),
+        weekly_add_limit=engine.weekly_adds[0],
+        adds_used_this_week=engine.weekly_adds[1],
         adds_left=plan.adds_left,
         capped=plan.capped,
         notes=plan.notes + engine.ownership_notes([m.add for m in plan.moves]),

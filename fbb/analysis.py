@@ -468,15 +468,19 @@ def _day_label(day: dt.date | None) -> str:
 def plan_moves(view: LeagueView, base: MatchupProjection, roster: list[PlayerInfo], free_agents: list[PlayerInfo],
                mine_now: dict[str, float], valuer: Valuer, rank: dict[int, float], roster_size: int,
                move_days: list[int], adds_left: int | None = None, min_gain: float = 0.0,
-               drop_pool: int = 3, season_weight: float = 0.05) -> MovePlan:
+               drop_pool: int = 3, season_weight: float = 0.05, shortlist: int = 8,
+               max_adds: int | None = None) -> MovePlan:
     """Dated add/drop plan for the rest of the matchup.
 
     Walks `move_days` in order. Each day it picks the best add among free agents who play that day
     (into an open roster spot, else for one of the `drop_pool` weakest players or a streamer added
     earlier in the plan), makes it, and searches again on the updated roster before moving on. A
-    streamer dropped later still counts for the games in between. Moves are scored on matchup gain
-    plus a small season-value term, as in Engine.best_drop_for.
+    streamer dropped later still counts for the games in between; one added the same day is never
+    the drop (it would never play). Moves are scored on matchup gain plus a small season-value term,
+    as in Engine.best_drop_for. To keep this fast, each step only tries drops for the `shortlist`
+    free agents that add the most as a straight add (no drop).
 
+    Without a weekly limit, `max_adds` (if set) bounds the plan so it stays a short to-do list.
     With `adds_left` set and binding, it keeps the plan of at most that many adds that captures at
     least 90% of the best capped gain with the fewest adds.
     """
@@ -484,9 +488,9 @@ def plan_moves(view: LeagueView, base: MatchupProjection, roster: list[PlayerInf
 
     def search(threshold: float, limit: int | None) -> tuple[list[PlannedMove], MatchupProjection]:
         return _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster_size, move_days,
-                            threshold, limit, drop_pool, season_weight)
+                            threshold, limit, drop_pool, season_weight, shortlist)
 
-    moves, after = search(min_gain, None)
+    moves, after = search(min_gain, max_adds if adds_left is None else None)
     if adds_left is None or len(moves) <= adds_left:
         return MovePlan(moves, base, after, adds_left)
 
@@ -505,12 +509,12 @@ def plan_moves(view: LeagueView, base: MatchupProjection, roster: list[PlayerInf
 
 
 def _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster_size, move_days,
-                 min_gain, limit, drop_pool, season_weight) -> tuple[list[PlannedMove], MatchupProjection]:
+                 min_gain, limit, drop_pool, season_weight, shortlist) -> tuple[list[PlannedMove], MatchupProjection]:
     schedule: list[ScheduledMove] = []
     planned: list[PlannedMove] = []
     current = base
     taken = {p.id for p in roster}
-    streamers: set[int] = set()  # added earlier in this plan
+    streamers: dict[int, int] = {}  # player id -> day added earlier in this plan
     for sp in move_days:
         day = view.sp_date(sp)
         later = {d for d in base.remaining if d >= sp}
@@ -519,12 +523,21 @@ def _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster
             if len(active) < roster_size:
                 drops: list[PlayerInfo | None] = [None]
             else:
-                drops = sorted(active, key=lambda p: rank.get(p.id, 0.0))[:drop_pool]
-                drops += [p for p in active if p.id in streamers and all(p.id != d.id for d in drops)]
+                # A player added today can't be today's drop too: he'd never play.
+                droppable = [p for p in active if streamers.get(p.id, -1) < sp]
+                drops = sorted(droppable, key=lambda p: rank.get(p.id, 0.0))[:drop_pool]
+                drops += [p for p in droppable if p.id in streamers and all(p.id != d.id for d in drops)]
+            candidates = [fa for fa in free_agents
+                          if fa.id not in taken and sp in fa.game_days and fa.availability(day) > 0]
+            if len(candidates) > shortlist and drops != [None]:
+                straight_add = {}  # gain as a pure add, no drop: cheap stand-in for the full search
+                for fa in candidates:
+                    trial = [*schedule, ScheduledMove(sp, [fa], [])]
+                    after = _reproject(view, base, roster, mine_now, rank, rosters_by_day(roster, trial, base.remaining))
+                    straight_add[fa.id] = matchup_gain(view, current, after) + season_weight * rank[fa.id]
+                candidates = sorted(candidates, key=lambda p: straight_add[p.id], reverse=True)[:shortlist]
             best = None
-            for fa in free_agents:
-                if fa.id in taken or sp not in fa.game_days or fa.availability(day) <= 0:
-                    continue
+            for fa in candidates:
                 for drop in drops:
                     trial = [*schedule, ScheduledMove(sp, [fa], [drop] if drop else [])]
                     after = _reproject(view, base, roster, mine_now, rank, rosters_by_day(roster, trial, base.remaining))
@@ -559,7 +572,7 @@ def _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster
                                        fills))
             current = after
             taken.add(fa.id)
-            streamers.add(fa.id)
+            streamers[fa.id] = sp
     return planned, current
 
 

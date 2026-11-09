@@ -27,9 +27,9 @@ function PlanView({ plan, isPoints }: { plan: MovePlan; isPoints: boolean }) {
       <Group justify="space-between" mb="xs" wrap="wrap">
         <Title order={4}>Add/drop plan by day</Title>
         <Group gap="xs">
-          {plan.adds_left !== null && (
+          {plan.weekly_add_limit !== null && plan.adds_used_this_week !== null && (
             <Badge variant="light" color={plan.capped ? 'orange' : 'gray'}>
-              {plan.adds_left} add{plan.adds_left === 1 ? '' : 's'} left this week
+              {plan.adds_used_this_week} of {plan.weekly_add_limit} adds used this week
             </Badge>
           )}
           {plan.moves.length > 0 && (

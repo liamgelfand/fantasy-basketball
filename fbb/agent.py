@@ -120,7 +120,7 @@ class FantasyAgent:
                 "acquisition_rules": d.acquisition_rules,
                 "my_team": {"name": d.my_team.name, "record": d.my_team.record, "standing": d.my_team.standing,
                             "acquisitions_this_season": d.my_team.acquisitions},
-                "adds_left_this_week": e.adds_left,  # from MAX_WEEKLY_ADDS / ADDS_USED_THIS_WEEK; None = not set
+                "adds_left_this_week": e.adds_left,  # league limit - adds in ESPN's activity feed; None = no limit or unread
                 "punted_categories": sorted(self.cfg.punt_categories),
                 "stat_window_in_use": self.cfg.stat_window,
                 "today_scoring_period": d.today_sp, "todays_games_started": d.today_started(),
@@ -210,7 +210,7 @@ class FantasyAgent:
              "input_schema": schema({"name": {"type": "string"}, "include_news": {"type": "boolean"}}, ["name"])},
             {"name": "simulate_moves", "description": "Re-project the current matchup after adding and/or dropping players. Returns expected categories won and win probability before and after, per-category changes, and rest-of-season value change.",
              "input_schema": schema({"add": names, "drop": names})},
-            {"name": "move_plan", "description": "Dated add/drop sequence for the rest of the matchup, built day by day: today's moves first (e.g. a free agent who plays today filling an empty lineup slot, no drop needed if a roster spot is open), then each later day's best move on the roster left by the earlier ones. Respects the weekly add limit when the manager has configured it. Today is skipped once its games have tipped.",
+            {"name": "move_plan", "description": "Dated add/drop sequence for the rest of the matchup, built day by day: today's moves first (e.g. a free agent who plays today filling an empty lineup slot, no drop needed if a roster spot is open), then each later day's best move on the roster left by the earlier ones. Respects the league's weekly add limit, counting this week's adds from ESPN's activity feed. Today is skipped once its games have tipped.",
              "input_schema": schema()},
             {"name": "evaluate_trade", "description": "Evaluate a trade from my side: per-category z-score and per-game changes, rest-of-season games, and the effect on this matchup.",
              "input_schema": schema({"give": names, "receive": names}, ["give", "receive"])},

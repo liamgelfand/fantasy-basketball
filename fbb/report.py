@@ -148,9 +148,10 @@ def build_report(engine: Engine) -> str:
         add(_table(["When", "Team", "Action", "Player"], [[a["date"], a["team"], a["action"], a["player"]] for a in activity]))
         add("")
 
-    rules = d.acquisition_rules
-    if rules.get("matchup_acquisition_limit"):
-        add(f"_Acquisitions: limit {rules['matchup_acquisition_limit']} per matchup; you have made {me.acquisitions} this season._")
+    limit, used, _ = engine.weekly_adds
+    if limit:
+        week = f"{used} used this week" if used is not None else "this week's count unavailable"
+        add(f"_Acquisitions: limit {limit} per matchup ({week}); you have made {me.acquisitions} this season._")
     return "\n".join(lines)
 
 
