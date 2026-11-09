@@ -69,7 +69,9 @@ def subscription_ready() -> bool:
     claude = shutil.which("claude")
     if claude:
         try:
-            out = subprocess.run([claude, "auth", "status"], capture_output=True, text=True, timeout=20).stdout
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0  # no console flash from pythonw
+            out = subprocess.run([claude, "auth", "status"], capture_output=True, text=True, timeout=20,
+                                 creationflags=flags).stdout
             return json.loads(out).get("loggedIn") is True
         except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
