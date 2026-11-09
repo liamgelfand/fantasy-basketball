@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 import statistics
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -108,6 +109,12 @@ def daily_starters(roster: list[PlayerInfo], sp: int, slots: list[str], rank: di
     Players are inserted highest-value first using augmenting paths, so a higher-value
     player is never displaced by a lower-value one and positional eligibility is respected.
     """
+    return [p for p in _assign_slots(roster, sp, slots, rank, day) if p is not None]
+
+
+def _assign_slots(roster: list[PlayerInfo], sp: int, slots: list[str], rank: dict[int, float],
+                  day: dt.date | None) -> list[PlayerInfo | None]:
+    """daily_starters' matching, one entry per slot (None = nobody can fill it that day)."""
     playing = [p for p in roster if sp in p.game_days and not p.is_injured_reserve and p.availability(day) > 0]
     playing.sort(key=lambda p: rank.get(p.id, 0.0), reverse=True)
     slot_owner: list[PlayerInfo | None] = [None] * len(slots)
@@ -124,7 +131,7 @@ def daily_starters(roster: list[PlayerInfo], sp: int, slots: list[str], rank: di
 
     for p in playing:
         place(p, set())
-    return [p for p in slot_owner if p is not None]
+    return slot_owner
 
 
 @dataclass
@@ -135,14 +142,18 @@ class DayPlan:
     started: list[str]  # names who fill a starting slot
     benched: list[str]  # have a game but no open slot
     open_slots: int
+    open_slot_names: list[str] = field(default_factory=list)  # starting slots nobody can fill
 
 
-def plan_days(roster: list[PlayerInfo], sps: list[int], view: LeagueView, rank: dict[int, float]) -> list[DayPlan]:
+def plan_days(roster: list[PlayerInfo], sps: list[int], view: LeagueView, rank: dict[int, float],
+              day_rosters: dict[int, list[PlayerInfo]] | None = None) -> list[DayPlan]:
     plans = []
     for sp in sps:
         day = view.sp_date(sp)
-        starters = daily_starters(roster, sp, view.lineup_slots, rank, day)
-        playing = [p for p in roster if sp in p.game_days and not p.is_injured_reserve and p.availability(day) > 0]
+        on_day = day_rosters.get(sp, roster) if day_rosters else roster
+        owners = _assign_slots(on_day, sp, view.lineup_slots, rank, day)
+        starters = [p for p in owners if p is not None]
+        playing = [p for p in on_day if sp in p.game_days and not p.is_injured_reserve and p.availability(day) > 0]
         started_ids = {p.id for p in starters}
         plans.append(DayPlan(
             sp=sp,
@@ -151,6 +162,7 @@ def plan_days(roster: list[PlayerInfo], sps: list[int], view: LeagueView, rank: 
             started=[p.name for p in starters],
             benched=[p.name for p in playing if p.id not in started_ids],
             open_slots=len(view.lineup_slots) - len(starters),
+            open_slot_names=[slot for slot, p in zip(view.lineup_slots, owners, strict=True) if p is None],
         ))
     return plans
 
@@ -166,8 +178,11 @@ class SideProjection:
     days: list[DayPlan]
 
 
-def _expected_contributions(roster, sps, view, rank):
-    """Sum expected per-stat production over the given days, starters only, weighted by availability."""
+def _expected_contributions(roster, sps, view, rank, day_rosters=None):
+    """Sum expected per-stat production over the given days, starters only, weighted by availability.
+
+    `day_rosters` overrides the roster on specific days (moves made partway through the matchup).
+    """
     sums: dict[str, float] = {}
     sq: dict[str, float] = {}
     games = 0.0
@@ -175,7 +190,8 @@ def _expected_contributions(roster, sps, view, rank):
     player_games: dict[int, tuple[PlayerInfo, float]] = {}
     for sp in sps:
         day = view.sp_date(sp)
-        for p in daily_starters(roster, sp, view.lineup_slots, rank, day):
+        on_day = day_rosters.get(sp, roster) if day_rosters else roster
+        for p in daily_starters(on_day, sp, view.lineup_slots, rank, day):
             a = p.availability(day)
             if a <= 0:
                 continue
@@ -195,8 +211,9 @@ def _expected_contributions(roster, sps, view, rank):
 
 
 def project_side(roster: list[PlayerInfo], current: dict[str, float], elapsed: list[int],
-                 remaining: list[int], view: LeagueView, rank: dict[int, float]) -> SideProjection:
-    add, var, games, by_player = _expected_contributions(roster, remaining, view, rank)
+                 remaining: list[int], view: LeagueView, rank: dict[int, float],
+                 day_rosters: dict[int, list[PlayerInfo]] | None = None) -> SideProjection:
+    add, var, games, by_player = _expected_contributions(roster, remaining, view, rank, day_rosters)
     final: dict[str, float] = {}
     sd: dict[str, float] = {}
     past = None
@@ -225,7 +242,7 @@ def project_side(roster: list[PlayerInfo], current: dict[str, float], elapsed: l
             final[c] = current.get(c, 0.0) + add.get(c, 0.0)
             sd[c] = math.sqrt(var.get(c, 0.0))
 
-    days = plan_days(roster, remaining, view, rank)
+    days = plan_days(roster, remaining, view, rank, day_rosters)
     return SideProjection(final=final, sd=sd, remaining_games=games, games_by_player=by_player, days=days)
 
 
@@ -283,9 +300,16 @@ def win_prob(cat: Category, mine: float, theirs: float, sd_m: float, sd_t: float
 
 def project_matchup(view: LeagueView, my_roster: list[PlayerInfo], opponent: TeamInfo | None,
                     mine_now: dict[str, float], theirs_now: dict[str, float],
-                    elapsed: list[int], remaining: list[int], rank: dict[int, float]) -> MatchupProjection:
-    mine = project_side(my_roster, mine_now, elapsed, remaining, view, rank)
+                    elapsed: list[int], remaining: list[int], rank: dict[int, float],
+                    day_rosters: dict[int, list[PlayerInfo]] | None = None) -> MatchupProjection:
+    mine = project_side(my_roster, mine_now, elapsed, remaining, view, rank, day_rosters)
     theirs = project_side(opponent.roster, theirs_now, elapsed, remaining, view, rank) if opponent else None
+    return _combine(view, opponent, mine, theirs, mine_now, theirs_now, elapsed, remaining)
+
+
+def _combine(view: LeagueView, opponent: TeamInfo | None, mine: SideProjection, theirs: SideProjection | None,
+             mine_now: dict[str, float], theirs_now: dict[str, float],
+             elapsed: list[int], remaining: list[int]) -> MatchupProjection:
     outlooks = []
     for cat in view.categories:
         c = cat.stat
@@ -332,21 +356,69 @@ def apply_moves(roster: list[PlayerInfo], add: list[PlayerInfo], drop: list[Play
     return new
 
 
+@dataclass
+class ScheduledMove:
+    """An add/drop made on scoring period `sp`: the roster changes from that day on."""
+    sp: int
+    add: list[PlayerInfo]
+    drop: list[PlayerInfo]
+
+
+def rosters_by_day(roster: list[PlayerInfo], moves: list[ScheduledMove], sps: list[int]) -> dict[int, list[PlayerInfo]]:
+    """The roster on each day once every move dated on or before it is made (moves in date order)."""
+    out = {}
+    for sp in sps:
+        on_day = roster
+        for m in moves:
+            if m.sp <= sp:
+                on_day = apply_moves(on_day, m.add, m.drop)
+        out[sp] = on_day
+    return out
+
+
+def _reproject(view: LeagueView, base: MatchupProjection, roster: list[PlayerInfo], mine_now: dict[str, float],
+               rank: dict[int, float], day_rosters: dict[int, list[PlayerInfo]] | None = None) -> MatchupProjection:
+    """Re-project my side only; the opponent's projection doesn't change with my moves."""
+    mine = project_side(roster, mine_now, base.elapsed, base.remaining, view, rank, day_rosters)
+    return _combine(view, base.opponent, mine, base.theirs, mine_now,
+                    {c.stat: c.theirs_now for c in base.categories}, base.elapsed, base.remaining)
+
+
+def matchup_gain(view: LeagueView, before: MatchupProjection, after: MatchupProjection) -> float:
+    """Points leagues: projected fantasy points added. Category leagues: expected categories added."""
+    if view.is_points:
+        return after.mine.final.get("FPTS", 0.0) - before.mine.final.get("FPTS", 0.0)
+    return after.expected_wins - before.expected_wins
+
+
 def simulate(view: LeagueView, base: MatchupProjection, roster: list[PlayerInfo], add: list[PlayerInfo],
              drop: list[PlayerInfo], mine_now: dict[str, float], valuer: Valuer,
-             rank: dict[int, float], roster_size: int) -> MoveResult:
+             rank: dict[int, float], roster_size: int, on_sp: int | None = None) -> MoveResult:
+    """Re-project the matchup after a move made now, or on scoring period `on_sp`.
+
+    A move dated `on_sp` leaves the earlier days alone: dropped players keep the games before it
+    and added players only count from that day on.
+    """
     new_roster = apply_moves(roster, add, drop)
     notes = []
     active = [p for p in new_roster if not p.is_injured_reserve]
     if len(active) > roster_size:
         notes.append(f"Roster would have {len(active)} active players but only {roster_size} spots: drop someone.")
+    days = {sp for sp in base.remaining if on_sp is None or sp >= on_sp}
     for p in add:
-        if not p.game_days & set(base.remaining):
+        if not p.game_days & days:
             notes.append(f"{p.name} has no games left in this matchup.")
     new_rank = {**rank, **{p.id: valuer.total(p) for p in add}}
-    after = project_matchup(view, new_roster, base.opponent, mine_now,
-                            {c.stat: c.theirs_now for c in base.categories},
-                            base.elapsed, base.remaining, new_rank)
+    if on_sp is None:
+        after = _reproject(view, base, new_roster, mine_now, new_rank)
+    else:
+        schedule = [ScheduledMove(on_sp, add, drop)]
+        after = _reproject(view, base, roster, mine_now, new_rank, rosters_by_day(roster, schedule, base.remaining))
+    return _move_result(base, after, add, drop, valuer, notes)
+
+
+def _move_result(base: MatchupProjection, after: MatchupProjection, add: list[PlayerInfo], drop: list[PlayerInfo],
+                 valuer: Valuer, notes: list[str]) -> MoveResult:
     return MoveResult(
         add=[p.name for p in add],
         drop=[p.name for p in drop],
@@ -360,6 +432,135 @@ def simulate(view: LeagueView, base: MatchupProjection, roster: list[PlayerInfo]
         projected_delta={c: round(after.mine.final[c] - base.mine.final[c], 3) for c in after.mine.final},
         notes=notes,
     )
+
+
+# ---------------------------------------------------------------- day-by-day move plan
+
+@dataclass
+class PlannedMove:
+    sp: int
+    date: dt.date | None
+    add: PlayerInfo
+    drop: PlayerInfo | None  # None: goes into an open roster spot
+    gain: float  # matchup gain of this move on top of the earlier moves in the plan
+    result: MoveResult  # same, relative to the roster after the earlier moves
+    fills: list[str]  # starting slots that would otherwise sit empty that day
+
+
+@dataclass
+class MovePlan:
+    moves: list[PlannedMove]
+    before: MatchupProjection
+    after: MatchupProjection  # with every move in the plan made
+    adds_left: int | None  # None: no weekly limit configured
+    capped: bool = False  # the weekly limit cut moves that would have helped
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def gain(self) -> float:
+        return sum(m.gain for m in self.moves)
+
+
+def _day_label(day: dt.date | None) -> str:
+    return f"{day:%a %m/%d}" if day else "that day"
+
+
+def plan_moves(view: LeagueView, base: MatchupProjection, roster: list[PlayerInfo], free_agents: list[PlayerInfo],
+               mine_now: dict[str, float], valuer: Valuer, rank: dict[int, float], roster_size: int,
+               move_days: list[int], adds_left: int | None = None, min_gain: float = 0.0,
+               drop_pool: int = 3, season_weight: float = 0.05) -> MovePlan:
+    """Dated add/drop plan for the rest of the matchup.
+
+    Walks `move_days` in order. Each day it picks the best add among free agents who play that day
+    (into an open roster spot, else for one of the `drop_pool` weakest players or a streamer added
+    earlier in the plan), makes it, and searches again on the updated roster before moving on. A
+    streamer dropped later still counts for the games in between. Moves are scored on matchup gain
+    plus a small season-value term, as in Engine.best_drop_for.
+
+    With `adds_left` set and binding, it keeps the plan of at most that many adds that captures at
+    least 90% of the best capped gain with the fewest adds.
+    """
+    rank = {**rank, **{p.id: valuer.total(p) for p in free_agents if p.id not in rank}}
+
+    def search(threshold: float, limit: int | None) -> tuple[list[PlannedMove], MatchupProjection]:
+        return _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster_size, move_days,
+                            threshold, limit, drop_pool, season_weight)
+
+    moves, after = search(min_gain, None)
+    if adds_left is None or len(moves) <= adds_left:
+        return MovePlan(moves, base, after, adds_left)
+
+    full_gain = sum(m.gain for m in moves)
+    options = [search(min_gain, adds_left)]  # first come, first served
+    if adds_left > 0:  # or only take moves at least as big as the k-th biggest one
+        for t in sorted({m.gain for m in moves}, reverse=True)[:adds_left + 2]:
+            options.append(search(max(min_gain, t - 1e-9), adds_left))
+    best = max(sum(m.gain for m in o[0]) for o in options)
+    good = [o for o in options if sum(m.gain for m in o[0]) >= 0.9 * best - 1e-9]
+    capped_moves, capped_after = min(good, key=lambda o: (len(o[0]), -sum(m.gain for m in o[0])))
+    capped_gain = sum(m.gain for m in capped_moves)
+    note = (f"Weekly add limit: {adds_left} add{'s' if adds_left != 1 else ''} left. The uncapped plan uses "
+            f"{len(moves)} adds for {full_gain:+.2f}; this plan uses {len(capped_moves)} for {capped_gain:+.2f}.")
+    return MovePlan(capped_moves, base, capped_after, adds_left, capped=True, notes=[note])
+
+
+def _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster_size, move_days,
+                 min_gain, limit, drop_pool, season_weight) -> tuple[list[PlannedMove], MatchupProjection]:
+    schedule: list[ScheduledMove] = []
+    planned: list[PlannedMove] = []
+    current = base
+    taken = {p.id for p in roster}
+    streamers: set[int] = set()  # added earlier in this plan
+    for sp in move_days:
+        day = view.sp_date(sp)
+        later = {d for d in base.remaining if d >= sp}
+        while limit is None or len(planned) < limit:
+            active = [p for p in rosters_by_day(roster, schedule, [sp])[sp] if not p.is_injured_reserve]
+            if len(active) < roster_size:
+                drops: list[PlayerInfo | None] = [None]
+            else:
+                drops = sorted(active, key=lambda p: rank.get(p.id, 0.0))[:drop_pool]
+                drops += [p for p in active if p.id in streamers and all(p.id != d.id for d in drops)]
+            best = None
+            for fa in free_agents:
+                if fa.id in taken or sp not in fa.game_days or fa.availability(day) <= 0:
+                    continue
+                for drop in drops:
+                    trial = [*schedule, ScheduledMove(sp, [fa], [drop] if drop else [])]
+                    after = _reproject(view, base, roster, mine_now, rank, rosters_by_day(roster, trial, base.remaining))
+                    gain = matchup_gain(view, current, after)
+                    score = gain + season_weight * (rank[fa.id] - (rank.get(drop.id, 0.0) if drop else 0.0))
+                    if gain > min_gain and (best is None or score > best[0]):
+                        best = (score, gain, fa, drop, after, trial)
+            if best is None:
+                break
+            _, gain, fa, drop, after, schedule = best
+
+            was = next(d for d in current.mine.days if d.sp == sp)
+            now = next(d for d in after.mine.days if d.sp == sp)
+            fills = list((Counter(was.open_slot_names) - Counter(now.open_slot_names)).elements())
+            notes = []
+            if drop is None:
+                notes.append("Uses an open roster spot: no drop needed.")
+            if fills:
+                notes.append(f"Fills the empty {'/'.join(fills)} slot on {_day_label(day)}.")
+            if drop is not None:
+                left = len(drop.game_days & later)
+                if drop.id in streamers:
+                    notes.append(f"{drop.name} was streamed in earlier in this plan; those games still count.")
+                if not left:
+                    notes.append(f"{drop.name} has no games left this matchup.")
+                else:
+                    when = "plays that day" if sp in drop.game_days else "has no game that day"
+                    notes.append(f"{drop.name} {when}. Losing {left} remaining game{'s' if left != 1 else ''} "
+                                 "is already counted in the gain.")
+            planned.append(PlannedMove(sp, day, fa, drop, gain,
+                                       _move_result(current, after, [fa], [drop] if drop else [], valuer, notes),
+                                       fills))
+            current = after
+            taken.add(fa.id)
+            streamers.add(fa.id)
+    return planned, current
 
 
 def category_weights(proj: MatchupProjection, punts: frozenset[str]) -> dict[str, float]:

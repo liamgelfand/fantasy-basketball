@@ -21,7 +21,27 @@ python -m fbb check       # verifies everything and shows what it detected
 Application → Cookies → `https://fantasy.espn.com`, copy `espn_s2` and `SWID` into `.env`.
 They last months; if requests start failing with 401, grab fresh ones.
 
-## Web app (recommended)
+## Desktop app (recommended)
+
+One-time setup (Windows, needs Node.js 20+ for the web client build):
+
+```powershell
+.\.venv\Scripts\python -m fbb desktop --install-shortcuts   # adds Desktop + Start menu shortcuts
+```
+
+Then open **Fantasy HQ** from the desktop or the Start menu. It runs in its own window (Edge WebView2),
+with no console and no browser tab:
+
+- It rebuilds the web client on launch whenever anything in `web/` changed, so it's never stale.
+- Only one copy runs: opening it again brings the existing window to the front.
+- Closing the window stops the server.
+- It serves on `127.0.0.1:8765`, so `python -m fbb serve` on :8000 can run alongside it.
+- If it can't start (missing `.env` value, build error), the window says why. Logs are in
+  `.fbb/logs/desktop.log`.
+
+`python -m fbb desktop` launches it from a terminal, and `--remove-shortcuts` undoes the setup.
+
+## Web app (browser)
 
 Double-click **`Fantasy HQ.bat`** (it builds the web client on first run), or:
 
@@ -50,6 +70,7 @@ fbb/                 Python package (domain + API)
   analysis.py        pure math: valuation, lineups, projection, simulation
   engine.py          use cases combining data + analysis
   agent.py           Claude tool loop over Engine methods
+  desktop.py         desktop window launcher (pywebview), shortcuts, auto-rebuild
   api/               FastAPI layer
     app.py           app factory; serves /api and the built client
     routes/          thin HTTP handlers (league, players, moves, assistant)
@@ -82,7 +103,8 @@ Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest
 | `python -m fbb report --ai` | Report + Claude's game plan (checks news and the web, simulates moves) | yes |
 | `python -m fbb ask "should I drop X for Y?"` | One question, answered with tool calls | yes |
 | `python -m fbb chat` | Conversation with follow-ups | yes |
-| `python -m fbb json matchup` | Raw structured data (`matchup`, `roster`, `free-agents`, `standings`) | no |
+| `python -m fbb json matchup` | Raw structured data (`matchup`, `roster`, `free-agents`, `moves`, `standings`) | no |
+| `python -m fbb desktop` | Desktop app window (`--install-shortcuts` / `--remove-shortcuts`) | chat only |
 
 ## How the numbers work
 
@@ -95,16 +117,28 @@ Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest
   slot matching, highest value first), so benched games from a full roster don't count.
   Injury status discounts availability (OUT 0%, DTD 70%, …). Totals add to ESPN's live stats.
   Win probability per category uses a normal approximation of the final margin.
-- **Pickup ranking**: each free agent is simulated against your weakest three roster spots and
-  scored by the change in expected categories won this matchup. A separate list ranks
+- **Pickup ranking**: each free agent is simulated on their next game day (so the drop keeps
+  any games before it) against your weakest three roster spots and scored by the change in expected categories won this matchup. A separate list ranks
   rest-of-season value.
+- **Add/drop plan**: a dated sequence of moves, built day by day. Each day it picks the best
+  free agent who plays that day (into an open roster spot, else for one of your weakest players
+  or a streamer added earlier in the plan), applies it, and searches again on the updated roster.
+  So an empty slot today is filled first (no drop if you have a spot), then tomorrow's move is
+  planned around it; a streamer dropped later still counts for the games in between. Today is
+  skipped once its games tip. Set `MAX_WEEKLY_ADDS` and `ADDS_USED_THIS_WEEK` to cap the plan:
+  it then keeps the fewest adds that capture most of the gain and says when the cap cut moves.
 
 ## Claude settings
 
-`ANTHROPIC_API_KEY` in `.env`. Defaults: `claude-opus-5-5`, effort `high`, web search on.
-For cheaper runs set `CLAUDE_MODEL=claude-sonnet-5-5` or `CLAUDE_EFFORT=medium`. Requests opt
-into server-side refusal fallbacks (`fallbacks: "default"`), so a declined request is retried
-on a fallback model rather than failing.
+The assistant runs on your Claude plan (Pro or Max) through the
+[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview): install
+[Claude Code](https://code.claude.com) and log in (`claude`, then `/login`). No API key is used,
+and any `ANTHROPIC_API_KEY` in the environment is ignored so it can't bill API credits. Usage
+counts toward your plan's limits. This is meant for personal use; Anthropic does not allow
+offering claude.ai login in products for other people.
+
+Defaults: `claude-opus-5-5`, effort `high`, web search on. For lighter runs that use less of
+your plan, set `CLAUDE_MODEL=claude-sonnet-5-5` or `CLAUDE_EFFORT=medium`.
 
 ## Known limits
 
@@ -113,6 +147,8 @@ on a fallback model rather than failing.
   `MATCHUP_END_DATE`.
 - Today counts as already played once the first game tips (ESPN's live totals include it).
 - Free agents are the top `FREE_AGENT_POOL` by % owned; the agent can search by position for more.
+- ESPN only reports season-total acquisitions, so adds used this week come from
+  `ADDS_USED_THIS_WEEK`: update it as you make moves (the plan doesn't guess).
 
 ## Tests
 

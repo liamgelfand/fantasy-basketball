@@ -54,7 +54,7 @@ export function ChatPage() {
         <Stack className={classes.thread} gap="lg">
           {meta.data && !meta.data.chat_enabled && (
             <Alert color="yellow" variant="light" title="Claude isn't set up">
-              Add ANTHROPIC_API_KEY to your .env file, then restart the server.
+              Install Claude Code and log in (run claude, then /login), then restart the server.
             </Alert>
           )}
           {turns.length === 0 ? (

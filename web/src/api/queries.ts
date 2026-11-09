@@ -33,6 +33,11 @@ export function useFreeAgents(position: Position | null, includeInjured: boolean
   })
 }
 
+export function useMovePlan() {
+  const { params, key } = useSnapshotKey()
+  return useQuery({ queryKey: [...key, 'move-plan'], queryFn: ({ signal }) => api.movePlan(params, signal) })
+}
+
 export function useTeamRoster(teamId: number | null) {
   const { params, key } = useSnapshotKey()
   return useQuery({
