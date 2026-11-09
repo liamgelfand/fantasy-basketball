@@ -130,10 +130,13 @@ def test_install_shortcuts_passes_paths_via_env(monkeypatch, tmp_path):
         seen.update(cmd=cmd, env=env)
         return subprocess.CompletedProcess(cmd, 0, stdout="C:\\Users\\me\\Desktop\\Fantasy HQ.lnk\r\n", stderr="")
 
+    tagged = []
     (tmp_path / "pythonw.exe").write_text("")
     monkeypatch.setattr(desktop.sys, "executable", str(tmp_path / "python.exe"))
     monkeypatch.setattr(desktop.subprocess, "run", fake_run)
+    monkeypatch.setattr(desktop, "_set_app_id", tagged.append)
     assert desktop.install_shortcuts() == ["C:\\Users\\me\\Desktop\\Fantasy HQ.lnk"]
+    assert tagged == ["C:\\Users\\me\\Desktop\\Fantasy HQ.lnk"]  # the taskbar pins the window as this shortcut
     assert seen["cmd"][0] == "powershell.exe"
     assert seen["env"]["FBB_LNK_TARGET"] == str(tmp_path / "pythonw.exe")
     assert seen["env"]["FBB_LNK_ICON"] == str(desktop.ICON)

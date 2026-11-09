@@ -1,0 +1,14 @@
+/* No visible scrollbars anywhere: the page itself never scrolls (AppShell.Main is the scroll
+   container, see AppLayout.module.css), and inner areas still scroll by wheel/trackpad. */
+html,
+body {
+  overflow: hidden;
+}
+
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}

@@ -32,9 +32,16 @@
   margin-bottom: 2px;
 }
 
+/* html/body don't scroll (global.css), so the main area is its own scroll container. Content
+   still slides under the translucent fixed header, as it did when the document scrolled. */
+.main {
+  height: 100dvh;
+  overflow-y: auto;
+}
+
 /* The chat page manages its own scroll so the composer stays pinned to the bottom. */
 .mainChat {
-  height: 100dvh;
+  overflow-y: hidden;
   display: flex;
   flex-direction: column;
 }
