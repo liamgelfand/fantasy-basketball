@@ -33,6 +33,9 @@ WEBVIEW_DIR = DATA_DIR / "webview"
 # Not 8000, so `fbb serve` can run alongside the desktop app.
 PREFERRED_PORT = 8765
 MUTEX_NAME = "Local\\fbb-fantasy-hq-desktop"
+# Ties the window and the shortcuts together, so the taskbar shows and pins the window as Fantasy HQ
+# with its icon, rather than as pythonw.exe with Python's.
+APP_USER_MODEL_ID = "LiamGelfand.FantasyHQ"
 # Files that feed `npm run build`, besides everything under src/ and public/.
 WEB_BUILD_FILES = ("index.html", "package.json", "package-lock.json", "vite.config.ts", "postcss.config.cjs",
                    "tsconfig.json", "tsconfig.app.json", "tsconfig.node.json")
@@ -276,6 +279,21 @@ foreach ($folder in 'Desktop', 'Programs') {
 """
 
 
+def _set_app_id(target: str | int) -> None:
+    """Set APP_USER_MODEL_ID on a shortcut (its path) or a window (its handle)."""
+    import pythoncom
+    from win32com.propsys import propsys, pscon
+    from win32com.shell import shellcon
+
+    if isinstance(target, str):
+        store = propsys.SHGetPropertyStoreFromParsingName(target, None, shellcon.GPS_READWRITE, propsys.IID_IPropertyStore)
+    else:
+        store = propsys.SHGetPropertyStoreForWindow(target, propsys.IID_IPropertyStore)
+    store.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType(APP_USER_MODEL_ID, pythoncom.VT_LPWSTR))
+    if isinstance(target, str):
+        store.Commit()
+
+
 def _shortcuts(action: str) -> list[str]:
     """Create or remove the Desktop and Start menu shortcuts. Paths travel as environment
     variables, not spliced into the script, so spaces or quotes in them can't break it."""
@@ -290,7 +308,11 @@ def _shortcuts(action: str) -> list[str]:
                             env=env, capture_output=True, text=True)
     if result.returncode != 0:
         raise SystemExit(f"Couldn't {action} shortcuts:\n{result.stderr.strip()}")
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if action == "install":
+        for path in paths:
+            _set_app_id(path)
+    return paths
 
 
 def install_shortcuts() -> list[str]:
@@ -400,11 +422,15 @@ def run() -> None:
         import webview
 
         log.info("Starting %s", APP_NAME)
+        if sys.platform == "win32":
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
         server = DesktopServer()
         window = webview.create_window(APP_NAME, html=status_page("Starting..."), width=1440, height=900,
                                        min_size=(960, 640), text_select=True,
                                        background_color="#1a1b1e" if windows_prefers_dark() else "#ffffff")
         window.events.closed += server.stop
+        if sys.platform == "win32":
+            window.events.shown += lambda: _set_app_id(window.native.Handle.ToInt64())
         webview.start(_boot, (window, server), private_mode=False, storage_path=str(WEBVIEW_DIR), icon=str(ICON))
         server.stop()
         server.join()
