@@ -3,6 +3,7 @@ import type { LeagueMeta } from '../api/types'
 import { useSettings } from '../state/useSettings'
 
 const WINDOW_LABELS: Record<string, string> = {
+  model: 'Model (season, role changes, light prior)',
   blend: 'Blend (season + projection)',
   season: 'Season',
   last_30: 'Last 30 days',

@@ -55,7 +55,7 @@ function RosterView({ roster, isPoints }: { roster: Roster; isPoints: boolean })
               Weakest spots:
             </Text>
             {roster.weakest.map((w) => (
-              <Badge key={w.name} color="red" variant="light">
+              <Badge key={w.name} color="red" variant="light" title={w.reasons.join(' ') || undefined}>
                 {w.name} {signed(w.value)}
               </Badge>
             ))}

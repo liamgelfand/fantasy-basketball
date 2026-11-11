@@ -14,6 +14,7 @@ from espn_api.basketball import League
 from espn_api.basketball.constant import POSITION_MAP, PRO_TEAM_MAP, STATS_MAP
 
 from .config import Config
+from .projection import project
 
 PRO_TEAM_ID = {abbr: tid for tid, abbr in PRO_TEAM_MAP.items() if isinstance(tid, int)}
 NON_STARTING_SLOTS = {"BE", "IR"}
@@ -35,8 +36,8 @@ WINDOW_KEYS = {
     "last_7": "last_7",
     "projected": "projected",
 }
-# Season stats are trusted more as games accumulate; below this many games they
-# are blended with ESPN's projection (weight = gp / (gp + BLEND_GAMES)).
+# Legacy "blend" window: season blended with ESPN's projection, weight gp / (gp + BLEND_GAMES).
+# The default "model" window (fbb/projection.py) replaces it.
 BLEND_GAMES = 10
 # espn_api ACTIVITY_MAP action strings that put a player on the roster (178 = FA, 180 = waiver claim).
 # DROPPED, TRADED and MOVED don't use up an add.
@@ -72,12 +73,21 @@ class PlayerInfo:
     lineup_slot: str
     injury_status: str
     expected_return: dt.date | None
-    per_game: dict[str, float]  # per-game stats for the configured window, plus "FPTS"
+    per_game: dict[str, float]  # long-term per-game stats for the configured window, plus "FPTS"
     gp: float
     window: str
     windows: dict[str, dict[str, float]] = field(default_factory=dict)  # every window, for display
     game_days: set[int] = field(default_factory=set)  # scoring periods with a game
     on_waivers: bool = False
+    short_term: dict[str, float] = field(default_factory=dict)  # next ~2 weeks; empty = same as per_game
+    projection_note: str = ""  # what drove the projection
+    projection_weights: dict[str, float] = field(default_factory=dict)  # share of each window in it
+    minutes_trend: float = 0.0  # recent minus season minutes when the role changed, else 0
+
+    @property
+    def near_term(self) -> dict[str, float]:
+        """Per-game stats for this matchup and the next couple of weeks."""
+        return self.short_term or self.per_game
 
     def availability(self, day: dt.date | None) -> float:
         if self.expected_return and day and day >= self.expected_return:
@@ -313,9 +323,14 @@ class LeagueData:
                 windows[w] = {**avg, "FPTS": fpts}
                 gps[w] = gp
         windows["blend"] = _blend(windows.get("season", {}), gps.get("season", 0), windows.get("projected", {}))
+        long, short = project(windows, gps)
+        if long.per_game:
+            windows["model"] = {**long.per_game, "GP": gps.get("season", 0.0)}
+            windows["model_short"] = {**short.per_game, "GP": gps.get("season", 0.0)}
 
         chosen = self.cfg.stat_window
         per_game = windows.get(chosen) or windows.get("season") or windows.get("projected") or {}
+        model = chosen == "model" and bool(long.per_game)
         return PlayerInfo(
             id=p.playerId,
             name=p.name,
@@ -331,6 +346,10 @@ class LeagueData:
             windows=windows,
             game_days=self._game_days(p.proTeam),
             on_waivers=on_waivers,
+            short_term=short.per_game if model else {},
+            projection_note=long.note if model else f"Stats from the {chosen} window (STAT_WINDOW).",
+            projection_weights=long.weights if model else {},
+            minutes_trend=long.role_change if model else 0.0,
         )
 
     def _team(self, t) -> TeamInfo:

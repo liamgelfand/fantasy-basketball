@@ -111,15 +111,31 @@ Checks (CI runs all of them on every push): `ruff check .` and `python -m pytest
 - **Player value**: per-game z-scores vs every rostered player in your league. FG%/FT% use
   impact (pct above league average × attempts), so volume matters. TO counts negatively.
   Punted categories (`PUNT_CATEGORIES`) are excluded.
-- **Stat window** (`STAT_WINDOW`): `blend` (default) mixes season stats with ESPN's projection
-  until a player has played ~10 games, so early-season small samples don't mislead.
+- **Stat window** (`STAT_WINDOW`): `model` (default, `fbb/projection.py`) estimates each player's
+  per-game production as minutes × per-minute rate. ESPN's preseason projection is a prior worth
+  4 games (29% at 10 GP, 21% at 15 GP); season-to-date stats are the main evidence. A recent window
+  (last 7/15 days) only gets extra weight when its minutes differ from the season's by 4+ minutes
+  and 15%+ (a role change), so a new starter's projection moves and a hot shooting week doesn't.
+  Shooting percentages are always regressed toward the projection by attempts. It produces a
+  long-term line (player value) and a short-term line (next ~2 weeks: leans harder on the current
+  role and lightly on form) used for this matchup's projection. `blend`, `season`, `last_*` and
+  `projected` use one ESPN window as-is.
+- **Horizons**: *next 2 weeks* and *rest of season* values scale per-game value above replacement
+  level (the 5th-best free agent) by the games a player is expected to play: the schedule times
+  injury availability, using ESPN's return date (no date: OUT is assumed to last ~2 weeks,
+  day-to-day ~3 days). A player out six weeks loses most of their ROS value; one back in days doesn't.
 - **Matchup projection**: for each remaining day it builds your best *legal* lineup (positional
   slot matching, highest value first), so benched games from a full roster don't count.
   Injury status discounts availability (OUT 0%, DTD 70%, …). Totals add to ESPN's live stats.
   Win probability per category uses a normal approximation of the final margin.
 - **Pickup ranking**: each free agent is simulated on their next game day (so the drop keeps
-  any games before it) against your weakest three roster spots and scored by the change in expected categories won this matchup. A separate list ranks
-  rest-of-season value.
+  any games before it) against your weakest four roster spots (by combined short- and long-term
+  value) plus anyone flagged as long-injured or losing minutes. A swap scores this matchup's
+  change in expected categories won, plus the change in value beyond it: half a week per z of
+  rest-of-season value and a quarter week per z of next-2-weeks value (1 z-week ≈ 0.15
+  categories; in points leagues 3.5 games × the FPTS spread). Each pickup is labeled a
+  *streamer* (helps this week only), a *stash* (long-term value, little now) or both, with the
+  reasons (minutes trend, injury timeline, schedule). A separate list ranks rest-of-season value.
 - **Add/drop plan**: a dated sequence of moves, built day by day. Each day it picks the best
   free agent who plays that day (into an open roster spot, else for one of your weakest players
   or a streamer added earlier in the plan), applies it, and searches again on the updated roster.

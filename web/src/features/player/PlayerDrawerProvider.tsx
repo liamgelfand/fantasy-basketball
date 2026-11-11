@@ -21,6 +21,8 @@ import { formatStat, longDate, shortDate, signed } from '../../lib/format'
 import { PlayerDrawerContext } from './usePlayerDrawer'
 
 const WINDOW_LABELS: Record<string, string> = {
+  model: 'Model',
+  model_short: 'Model, next 2 wks',
   season: 'Season',
   last_30: 'Last 30',
   last_15: 'Last 15',
@@ -91,9 +93,27 @@ function PlayerCardView({ p }: { p: PlayerDetail }) {
 
       <SimpleGrid cols={3}>
         <Fact label="Value" value={signed(p.value)} />
+        <Fact label="Next 2 wks" value={signed(p.short_value)} />
+        <Fact label="ROS value" value={signed(p.ros_value)} />
         <Fact label="Games left" value={`${p.games_left} this wk`} />
         <Fact label="Rest of season" value={`${p.ros_games} games`} />
       </SimpleGrid>
+
+      {p.projection_note && (
+        <Text size="sm" c="dimmed">
+          {p.projection_note}
+          {Object.keys(p.projection_weights).length > 0 && (
+            <>
+              {' '}
+              (
+              {Object.entries(p.projection_weights)
+                .map(([w, share]) => `${WINDOW_LABELS[w] ?? w} ${Math.round(share * 100)}%`)
+                .join(', ')}
+              )
+            </>
+          )}
+        </Text>
+      )}
 
       {windows.length > 0 && (
         <div>

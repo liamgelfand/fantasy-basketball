@@ -99,10 +99,14 @@ def test_roster_and_free_agents(client):
     assert len(roster["players"]) == 13
     values = [p["value"] for p in roster["players"]]
     assert values == sorted(values, reverse=True)
+    assert all({"short_value", "ros_value"} <= set(p) for p in roster["players"])
+    assert len(roster["weakest"]) == 3 and all(isinstance(w["reasons"], list) for w in roster["weakest"])
 
     board = client.get("/api/free-agents").json()
     gains = [r["matchup_gain"] for r in board["rows"]]
     assert gains and gains == sorted(gains, reverse=True)
+    assert all(r["outlook"] in ("streamer", "stash", "both", None) and isinstance(r["notes"], list)
+               for r in board["rows"])
     assert client.get("/api/free-agents", params={"position": "XX"}).status_code == 422
 
 
@@ -149,6 +153,7 @@ def test_trade(client):
                       json={"partner_id": 2, "give": ["Player 0"], "get": [partner["players"][0]]})
     assert res.status_code == 200, res.text
     assert set(res.json()["per_game_change"]) >= {"PTS", "REB"}
+    assert isinstance(res.json()["ros_value_change"], float)
     assert client.post("/api/trades/evaluate", json={"partner_id": 1, "give": ["Player 0"],
                                                      "get": ["Player 1"]}).status_code == 404
 
@@ -363,6 +368,7 @@ def test_player_detail(client):
     detail = client.get(f"/api/players/{pid}").json()
     assert detail["is_mine"] and detail["owner"] == "Team 1"
     assert "season" in detail["windows"]
+    assert isinstance(detail["projection_note"], str) and isinstance(detail["projection_weights"], dict)
     assert detail["news"][0]["headline"].endswith("cleared to play")
     fa = client.get("/api/free-agents").json()["rows"][0]["id"]
     assert client.get(f"/api/players/{fa}").json()["owner"] is None

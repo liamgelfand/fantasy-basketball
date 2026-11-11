@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-STAT_WINDOWS = ("blend", "season", "last_30", "last_15", "last_7", "projected")
+STAT_WINDOWS = ("model", "blend", "season", "last_30", "last_15", "last_7", "projected")
 
 
 def _default_season() -> int:
@@ -53,7 +53,7 @@ def load_config() -> Config:
     if league_id is None:
         raise SystemExit("ESPN_LEAGUE_ID is not set. Copy .env.example to .env and fill it in.")
 
-    window = os.getenv("STAT_WINDOW", "blend").strip()
+    window = os.getenv("STAT_WINDOW", "model").strip()
     if window not in STAT_WINDOWS:
         raise SystemExit(f"STAT_WINDOW must be one of {STAT_WINDOWS}, got {window!r}")
 

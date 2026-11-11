@@ -5,6 +5,7 @@ Web client in `web/` (Node 20+): run `npm run typecheck && npm run lint && npm t
 
 ## Layout
 - `fbb/espn.py`: the only module that touches `espn_api`. Converts to `PlayerInfo`/`TeamInfo` dataclasses.
+- `fbb/projection.py`: pure per-game projection from ESPN's stat windows (default `model` window): long-term and next-2-weeks lines.
 - `fbb/analysis.py`: pure math (z-score valuation, daily lineup matching, matchup projection, move simulation). No I/O.
 - `fbb/engine.py`: combines data + analysis (FA board, drop candidates, lineup check, trade eval, JSON summaries).
 - `fbb/report.py`: deterministic markdown report. `fbb/agent.py`: Claude tool loop over Engine methods.
