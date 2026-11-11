@@ -88,13 +88,17 @@ export function TradesPage() {
 function TradeView({ result, isPoints, reverse }: { result: TradeResult; isPoints: boolean; reverse: string[] }) {
   const rows = Object.entries(result.per_game_change).map(([stat, value]) => ({ stat, value }))
   const verdict =
-    result.value_change > 0.5 ? '🤝 You win this trade' : result.value_change < -0.5 ? '🙅 You lose this trade' : '⚖️ Pretty even'
+    result.ros_value_change > 0.5
+      ? '🤝 You win this trade'
+      : result.ros_value_change < -0.5
+        ? '🙅 You lose this trade'
+        : '⚖️ Pretty even'
 
   return (
     <Stack gap="lg">
       <Title order={3}>{verdict}</Title>
       <SimpleGrid cols={{ base: 1, sm: 3 }}>
-        <StatCard label="Season value" value={signed(result.value_change, 2)} icon={<IconTrendingUp />} />
+        <StatCard label="Rest-of-season value" value={signed(result.ros_value_change, 2)} icon={<IconTrendingUp />} />
         <StatCard
           label="Rest-of-season games"
           value={signed(result.ros_games_change, 0)}

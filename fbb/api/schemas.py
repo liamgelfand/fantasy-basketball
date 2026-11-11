@@ -107,7 +107,9 @@ class PlayerRow(BaseModel):
     positions: list[str]
     lineup_slot: str | None
     status: str
-    value: float
+    value: float = Field(description="Long-term per-game value: z-score total vs every rostered player")
+    short_value: float = Field(description="Next-two-weeks value: current role and form, schedule and injuries")
+    ros_value: float = Field(description="Rest-of-season value: long-term value scaled by expected games left")
     games_left: int
     ros_games: int
     gp: float
@@ -119,7 +121,8 @@ class PlayerRow(BaseModel):
 
 class WeakSpot(BaseModel):
     name: str
-    value: float
+    value: float = Field(description="Rest-of-season value")
+    reasons: list[str] = Field(description="Injury timeline or role notes that make the player a drop candidate")
 
 
 class Roster(BaseModel):
@@ -135,6 +138,9 @@ class FreeAgentRow(PlayerRow):
     best_drop: str | None
     add_date: dt.date | None = Field(description="Day the move is simulated on: the player's next game this matchup")
     low_sample: bool
+    outlook: Literal["streamer", "stash", "both"] | None = Field(
+        description="streamer: helps this matchup only; stash: long-term value, little now; both")
+    notes: list[str] = Field(description="Why: horizon, role/minutes trend, injury timeline, schedule")
 
 
 class FreeAgentBoard(BaseModel):
@@ -153,6 +159,8 @@ class PlayerDetail(PlayerRow):
     is_mine: bool
     expected_return: dt.date | None
     windows: dict[str, dict[str, float]] = Field(description="Per-game stats by window (season, last_30, ...)")
+    projection_note: str = Field(description="What drove the projection (sample size, role change, ...)")
+    projection_weights: dict[str, float] = Field(description="Share of each window in the model projection")
     upcoming_games: list[dt.date]
     news: list[NewsItem]
     news_error: str | None = None
@@ -219,6 +227,7 @@ class TradeRequest(BaseModel):
 
 class TradeResult(BaseModel):
     value_change: float
+    ros_value_change: float = Field(description="Change in rest-of-season value (injuries and schedule priced in)")
     ros_games_change: int
     matchup_change: float | None = Field(description="Expected categories (or FPTS in points leagues) this matchup")
     per_game_change: dict[str, float]

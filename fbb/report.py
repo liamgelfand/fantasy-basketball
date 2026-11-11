@@ -86,9 +86,11 @@ def build_report(engine: Engine) -> str:
             trend = "🔥" if delta > 1.5 else "🧊" if delta < -1.5 else ""
         status = "" if p.injury_status in ("ACTIVE", "", None) else p.injury_status
         rows.append([p.lineup_slot, f"{p.name} {trend}".strip(), p.pro_team, status, engine.games_left(p),
-                     f"{engine.value(p):+.1f}"] + [_fmt(s, stat(p, s)) for s in stats])
-    add(_table(["Slot", "Player", "Tm", "Status", "G left", "Value"] + stats, rows))
-    add("\n_Value = sum of per-game z-scores vs all rostered players (punted cats excluded). 🔥/🧊 = last 15 days well above/below season._\n")
+                     f"{engine.value(p):+.1f}", f"{engine.ros_value(p):+.1f}"] + [_fmt(s, stat(p, s)) for s in stats])
+    add(_table(["Slot", "Player", "Tm", "Status", "G left", "Value", "ROS"] + stats, rows))
+    add("\n_Value = sum of per-game z-scores vs all rostered players (punted cats excluded). ROS = rest-of-season "
+        "value: Value scaled by expected games left (schedule, injury timeline), pulled toward replacement level "
+        "for missed games. 🔥/🧊 = last 15 days well above/below season._\n")
 
     # ---- pickups
     gain_label = "Proj FPTS +" if d.is_points else "Exp cats +"
@@ -97,8 +99,10 @@ def build_report(engine: Engine) -> str:
         add("## Add/drop plan by day")
         rows = [[_when(engine, m), m.add.name, "/".join(_pos(m.add)), m.drop.name if m.drop else "(open spot)",
                  "/".join(m.fills) or "-", f"+{m.gain:.1f}" if d.is_points else f"+{m.gain:.2f}",
-                 _pct(m.result.win_prob_after)] for m in plan.moves]
-        add(_table(["Day", "Add", "Pos", "Drop", "Fills empty", gain_label, "Win % after"], rows)
+                 _pct(m.result.win_prob_after),
+                 _outlook(engine.outlook(m.gain, engine.ros_delta([m.add], [m.drop] if m.drop else [])))]
+                for m in plan.moves]
+        add(_table(["Day", "Add", "Pos", "Drop", "Fills empty", gain_label, "Win % after", "Horizon"], rows)
             if rows else "No add/drop improves this matchup enough to recommend.")
         add("\n_Each move is searched on the roster left by the moves before it._")
         add("".join(f"\n_{n}_" for n in plan.notes))
@@ -114,8 +118,9 @@ def build_report(engine: Engine) -> str:
         p = r["player"]
         rows.append([p.name, p.pro_team, "/".join(_pos(p)), p.injury_status if p.injury_status != "ACTIVE" else "",
                      r["games_left"], f"+{gain:.1f}" if d.is_points else f"+{gain:.2f}", _pct(res.win_prob_after),
-                     r["drop"].name if r["drop"] else "(open spot)", f"{r['value']:+.1f}"])
-    add(_table(["Player", "Tm", "Pos", "Status", "G left", gain_label, "Win % after", "Drop", "Season value"], rows)
+                     r["drop"].name if r["drop"] else "(open spot)", f"{r['ros_value']:+.1f}", _outlook(r["outlook"])])
+    add(_table(["Player", "Tm", "Pos", "Status", "G left", gain_label, "Win % after", "Drop", "ROS value", "Horizon"],
+               rows)
         if rows else "No free agent improves this matchup.")
     add("")
 
@@ -124,12 +129,16 @@ def build_report(engine: Engine) -> str:
     for r in engine.top_season_adds(8):
         p = r["player"]
         rows.append([p.name, p.pro_team, "/".join(_pos(p)), p.injury_status if p.injury_status != "ACTIVE" else "",
-                     f"{r['value']:+.1f}", f"{r['value_over_worst']:+.1f}", engine.ros_games(p)])
-    add(_table(["Player", "Tm", "Pos", "Status", "Value", "vs your worst", "ROS games"], rows))
+                     f"{r['value']:+.1f}", f"{r['ros_value']:+.1f}", f"{r['value_over_worst']:+.1f}",
+                     engine.ros_games(p), p.projection_note])
+    add(_table(["Player", "Tm", "Pos", "Status", "Value", "ROS value", "vs your worst", "ROS games", "Projection"], rows))
     add("")
     worst = engine.drop_candidates[:3]
     if worst:
-        add("**Weakest roster spots:** " + ", ".join(f"{p.name} ({engine.value(p):+.1f})" for p in worst))
+        add("**Weakest roster spots:** " + ", ".join(f"{p.name} ({engine.ros_value(p):+.1f} ROS)" for p in worst))
+        flags = [f for p in engine.drop_pool for f in engine.drop_flags(p)]
+        if flags:
+            add("\n" + "\n".join(f"- {f}" for f in flags))
         add("")
 
     # ---- league context
@@ -168,6 +177,10 @@ def _when(engine: Engine, m) -> str:
     return f"{m.date:%a %m/%d}" if m.date else "Later"
 
 
+def _outlook(tag: str | None) -> str:
+    return {"streamer": "Streamer (this week)", "stash": "Stash (long term)", "both": "Now + later"}.get(tag or "", "-")
+
+
 def _pos(p) -> list[str]:
     return [s for s in p.eligible_slots if s in ("PG", "SG", "SF", "PF", "C")]
 
@@ -191,6 +204,6 @@ def _action_items(engine: Engine) -> list[str]:
     season = engine.top_season_adds(1)
     if season and season[0]["value_over_worst"] >= 1.5 and all(season[0]["player"].id != m.add.id for m in planned):
         r = season[0]
-        items.append(f"Long-term upgrade: **{r['player'].name}** is worth {r['value_over_worst']:+.1f} z over "
+        items.append(f"Long-term upgrade: **{r['player'].name}** is worth {r['value_over_worst']:+.1f} rest-of-season value over "
                      f"**{engine.drop_candidates[0].name}**.")
     return items

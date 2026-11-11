@@ -113,6 +113,8 @@ def _player_fields(engine: Engine, p: PlayerInfo) -> dict:
         lineup_slot=p.lineup_slot or None,
         status=p.injury_status,
         value=engine.value(p),
+        short_value=engine.short_value(p),
+        ros_value=engine.ros_value(p),
         games_left=engine.games_left(p),
         ros_games=engine.ros_games(p),
         gp=p.gp,
@@ -129,7 +131,8 @@ def roster(engine: Engine) -> s.Roster:
         team=team_ref(me),
         stats=engine.display_stats(),
         players=[s.PlayerRow(**_player_fields(engine, p)) for p in sorted(me.roster, key=engine.value, reverse=True)],
-        weakest=[s.WeakSpot(name=p.name, value=engine.value(p)) for p in engine.drop_candidates[:3]],
+        weakest=[s.WeakSpot(name=p.name, value=engine.ros_value(p), reasons=engine.drop_flags(p))
+                 for p in engine.drop_candidates[:3]],
     )
 
 
@@ -146,13 +149,15 @@ def free_agents(engine: Engine, position: str | None, include_injured: bool) -> 
             win_prob_after=r["result"].win_prob_after,
             best_drop=r["drop"].name if r["drop"] else None,
             add_date=engine.data.sp_date(r["add_sp"]) if r["add_sp"] is not None else None,
-            low_sample=p.gp < 5 and p.window == "blend",
+            low_sample=p.gp < 5 and p.window in ("model", "blend"),
+            outlook=r["outlook"],
+            notes=r["result"].notes,
         ))
     rows.sort(key=lambda r: r.matchup_gain, reverse=True)
     return s.FreeAgentBoard(gain_label="Proj FPTS gain" if engine.data.is_points else "Exp cats gain", rows=rows)
 
 
-WINDOW_ORDER = ("season", "last_30", "last_15", "last_7", "projected", "blend")
+WINDOW_ORDER = ("model", "model_short", "season", "last_30", "last_15", "last_7", "projected", "blend")
 
 
 def player_detail(engine: Engine, p: PlayerInfo, news: list[dict], news_error: str | None) -> s.PlayerDetail:
@@ -169,6 +174,8 @@ def player_detail(engine: Engine, p: PlayerInfo, news: list[dict], news_error: s
         is_mine=bool(owner and owner.id == d.my_team_id),
         expected_return=p.expected_return,
         windows=windows,
+        projection_note=p.projection_note,
+        projection_weights=p.projection_weights,
         upcoming_games=upcoming,
         news=[s.NewsItem(**n) for n in news],
         news_error=news_error,
@@ -226,6 +233,7 @@ def trade(engine: Engine, give: list[PlayerInfo], get: list[PlayerInfo]) -> s.Tr
                   else m["expected_wins_after"] - m["expected_wins_before"])
     return s.TradeResult(
         value_change=result["total_value_change"],
+        ros_value_change=result["rest_of_season_value_change"],
         ros_games_change=result["ros_games_change"],
         matchup_change=round(change, 2) if change is not None else None,
         per_game_change=per_game,

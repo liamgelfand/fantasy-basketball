@@ -88,7 +88,12 @@ export interface PlayerRow {
   positions: string[]
   lineup_slot: string | null
   status: string
+  /** Long-term per-game value (z-score total) */
   value: number
+  /** Next two weeks: current role and form, schedule and injuries */
+  short_value: number
+  /** Rest of season: long-term value scaled by expected games left */
+  ros_value: number
   games_left: number
   ros_games: number
   gp: number
@@ -102,7 +107,8 @@ export interface Roster {
   team: TeamRef
   stats: string[]
   players: PlayerRow[]
-  weakest: { name: string; value: number }[]
+  /** value = rest-of-season value; reasons = injury timeline or role notes */
+  weakest: { name: string; value: number; reasons: string[] }[]
 }
 
 export interface FreeAgentRow extends PlayerRow {
@@ -111,6 +117,8 @@ export interface FreeAgentRow extends PlayerRow {
   best_drop: string | null
   add_date: string | null
   low_sample: boolean
+  outlook: 'streamer' | 'stash' | 'both' | null
+  notes: string[]
 }
 
 export interface FreeAgentBoard {
@@ -129,6 +137,8 @@ export interface PlayerDetail extends PlayerRow {
   is_mine: boolean
   expected_return: string | null
   windows: Record<string, Record<string, number>>
+  projection_note: string
+  projection_weights: Record<string, number>
   upcoming_games: string[]
   news: NewsItem[]
   news_error: string | null
@@ -182,6 +192,7 @@ export interface MovePlan {
 
 export interface TradeResult {
   value_change: number
+  ros_value_change: number
   ros_games_change: number
   matchup_change: number | null
   per_game_change: Record<string, number>

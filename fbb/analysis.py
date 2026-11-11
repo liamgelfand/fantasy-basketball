@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .espn import Category, PlayerInfo, TeamInfo
+from .espn import AVAILABILITY, Category, PlayerInfo, TeamInfo
 
 # Ratio categories and the (numerator, denominator) stats they are built from.
 RATIO_CATS = {
@@ -32,6 +32,10 @@ DEFAULT_CV = 0.6
 # Uncertainty in a player's true per-game average (role changes, small samples). Applied to
 # each player's whole-matchup total, since it doesn't average out across their games.
 MEAN_UNCERTAINTY = 0.15
+# Beyond this matchup, an absence without an ESPN return date is assumed to last this many days
+# (OUT / IR / suspension), or this many for day-to-day designations, before the player is back to full.
+ASSUMED_OUT_DAYS = 14
+ASSUMED_DTD_DAYS = 3
 
 
 class LeagueView(Protocol):
@@ -46,13 +50,18 @@ def stat(p: PlayerInfo, name: str) -> float:
     return float(p.per_game.get(name, 0.0) or 0.0)
 
 
+def _get(stats: dict[str, float], name: str) -> float:
+    return float(stats.get(name, 0.0) or 0.0)
+
+
 # ---------------------------------------------------------------- valuation
 
 class Valuer:
     """Per-game z-scores against a reference pool (by default every rostered player).
 
     Ratio categories use impact z-scores: (player% - pool%) * attempts, so a
-    high-volume shooter moves FG% more than a low-volume one.
+    high-volume shooter moves FG% more than a low-volume one. The pool is scored on long-term
+    per-game stats; pass `stats` (e.g. p.near_term) to score another stat line against it.
     """
 
     def __init__(self, pool: Iterable[PlayerInfo], categories: list[Category], punts: frozenset[str] = frozenset()):
@@ -65,7 +74,7 @@ class Valuer:
                 num, den = RATIO_CATS[cat.stat]
                 total_den = sum(stat(p, den) for p in pool)
                 rate = sum(stat(p, num) for p in pool) / total_den if total_den else 0.0
-                values = [self._ratio_impact(p, num, den, rate) for p in pool]
+                values = [self._ratio_impact(p.per_game, num, den, rate) for p in pool]
             else:
                 rate = 0.0
                 values = [stat(p, cat.stat) for p in pool]
@@ -74,30 +83,58 @@ class Valuer:
             self._params[cat.stat] = (mean, sd or 1.0, rate)
 
     @staticmethod
-    def _ratio_impact(p: PlayerInfo, num: str, den: str, rate: float) -> float:
+    def _ratio_impact(stats: dict[str, float], num: str, den: str, rate: float) -> float:
         if num == "AST":  # A/TO: assists above what the pool ratio implies for his turnovers
-            return stat(p, "AST") - rate * stat(p, "TO")
-        return stat(p, num) - rate * stat(p, den)
+            return _get(stats, "AST") - rate * _get(stats, "TO")
+        return _get(stats, num) - rate * _get(stats, den)
 
-    def z(self, p: PlayerInfo) -> dict[str, float]:
+    def sd(self, category: str) -> float:
+        """Pool standard deviation of a category: how much one z is worth in its units."""
+        return self._params[category][1] if category in self._params else 1.0
+
+    def z(self, p: PlayerInfo, stats: dict[str, float] | None = None) -> dict[str, float]:
+        stats = p.per_game if stats is None else stats
         out = {}
         for cat in self.categories:
             mean, sd, rate = self._params[cat.stat]
             if cat.stat in RATIO_CATS:
                 num, den = RATIO_CATS[cat.stat]
-                raw = self._ratio_impact(p, num, den, rate)
+                raw = self._ratio_impact(stats, num, den, rate)
             else:
-                raw = stat(p, cat.stat)
+                raw = _get(stats, cat.stat)
             z = (raw - mean) / sd
             out[cat.stat] = round(-z if cat.reverse else z, 2)
         return out
 
-    def total(self, p: PlayerInfo, weights: dict[str, float] | None = None) -> float:
-        zs = self.z(p)
+    def total(self, p: PlayerInfo, weights: dict[str, float] | None = None,
+              stats: dict[str, float] | None = None) -> float:
+        zs = self.z(p, stats)
         return round(sum(
             v * (weights.get(k, 1.0) if weights else 1.0)
             for k, v in zs.items() if k not in self.punts
         ), 2)
+
+
+# ---------------------------------------------------------------- availability over a horizon
+
+def horizon_availability(p: PlayerInfo, day: dt.date | None, today: dt.date | None) -> float:
+    """Chance `p` plays on `day`, for horizons beyond this matchup.
+
+    Like PlayerInfo.availability, but an injury designation without an ESPN return date doesn't last
+    forever: OUT-type absences are assumed to run ASSUMED_OUT_DAYS, day-to-day ones ASSUMED_DTD_DAYS.
+    """
+    if p.expected_return or day is None or today is None:
+        return p.availability(day)
+    now = AVAILABILITY.get((p.injury_status or "ACTIVE").upper(), 1.0)
+    if now >= 1.0:
+        return 1.0
+    span = ASSUMED_OUT_DAYS if now == 0 else ASSUMED_DTD_DAYS
+    return now if (day - today).days < span else 1.0
+
+
+def expected_games(p: PlayerInfo, sps: Iterable[int], view: LeagueView, today: dt.date | None) -> float:
+    """Games `p` is expected to play over scoring periods `sps`: his schedule times his availability."""
+    return sum(horizon_availability(p, view.sp_date(sp), today) for sp in sps if sp in p.game_days)
 
 
 # ---------------------------------------------------------------- lineups
@@ -198,14 +235,14 @@ def _expected_contributions(roster, sps, view, rank, day_rosters=None):
             games += a
             by_player[p.name] = by_player.get(p.name, 0.0) + a
             player_games[p.id] = (p, player_games.get(p.id, (p, 0.0))[1] + a)
-            for k, v in p.per_game.items():
+            for k, v in p.near_term.items():
                 v = float(v or 0)
                 sums[k] = sums.get(k, 0.0) + a * v
                 cv = GAME_CV.get(k, DEFAULT_CV)
                 # variance of a game that may not happen: a*sd^2 + a(1-a)*mean^2
                 sq[k] = sq.get(k, 0.0) + a * (cv * v) ** 2 + a * (1 - a) * v * v
     for p, g in player_games.values():
-        for k, v in p.per_game.items():
+        for k, v in p.near_term.items():
             sq[k] = sq.get(k, 0.0) + (MEAN_UNCERTAINTY * g * float(v or 0)) ** 2
     return sums, sq, games, by_player
 
@@ -408,7 +445,7 @@ def simulate(view: LeagueView, base: MatchupProjection, roster: list[PlayerInfo]
     for p in add:
         if not p.game_days & days:
             notes.append(f"{p.name} has no games left in this matchup.")
-    new_rank = {**rank, **{p.id: valuer.total(p) for p in add}}
+    new_rank = {**rank, **{p.id: valuer.total(p, stats=p.near_term) for p in add}}
     if on_sp is None:
         after = _reproject(view, base, new_roster, mine_now, new_rank)
     else:
@@ -468,27 +505,32 @@ def _day_label(day: dt.date | None) -> str:
 def plan_moves(view: LeagueView, base: MatchupProjection, roster: list[PlayerInfo], free_agents: list[PlayerInfo],
                mine_now: dict[str, float], valuer: Valuer, rank: dict[int, float], roster_size: int,
                move_days: list[int], adds_left: int | None = None, min_gain: float = 0.0,
-               drop_pool: int = 3, season_weight: float = 0.05, shortlist: int = 8,
-               max_adds: int | None = None) -> MovePlan:
+               drop_pool: int = 4, hold: dict[int, float] | None = None, flagged: Iterable[int] = (),
+               shortlist: int = 8, max_adds: int | None = None) -> MovePlan:
     """Dated add/drop plan for the rest of the matchup.
 
     Walks `move_days` in order. Each day it picks the best add among free agents who play that day
-    (into an open roster spot, else for one of the `drop_pool` weakest players or a streamer added
-    earlier in the plan), makes it, and searches again on the updated roster before moving on. A
-    streamer dropped later still counts for the games in between; one added the same day is never
-    the drop (it would never play). Moves are scored on matchup gain plus a small season-value term,
-    as in Engine.best_drop_for. To keep this fast, each step only tries drops for the `shortlist`
-    free agents that add the most as a straight add (no drop).
+    (into an open roster spot, else for one of the `drop_pool` players with the lowest `hold` value,
+    a `flagged` player (long injury, shrinking minutes) or a streamer added earlier in the plan),
+    makes it, and searches again on the updated roster before moving on. A streamer dropped later
+    still counts for the games in between; one added the same day is never the drop (it would never
+    play). Moves are scored on matchup gain plus hold(add) - hold(drop), as in Engine.best_drop_for:
+    `hold` is each player's value beyond this matchup in matchup-gain units (Engine.hold_value).
+    Without it, hold falls back to 0.05 x long-term z value. To keep this fast, each step only tries
+    drops for the `shortlist` free agents that add the most as a straight add (no drop).
 
     Without a weekly limit, `max_adds` (if set) bounds the plan so it stays a short to-do list.
     With `adds_left` set and binding, it keeps the plan of at most that many adds that captures at
     least 90% of the best capped gain with the fewest adds.
     """
-    rank = {**rank, **{p.id: valuer.total(p) for p in free_agents if p.id not in rank}}
+    rank = {**rank, **{p.id: valuer.total(p, stats=p.near_term) for p in free_agents if p.id not in rank}}
+    if hold is None:
+        hold = {p.id: 0.05 * valuer.total(p) for p in [*roster, *free_agents]}
+    flagged = frozenset(flagged)
 
     def search(threshold: float, limit: int | None) -> tuple[list[PlannedMove], MatchupProjection]:
         return _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster_size, move_days,
-                            threshold, limit, drop_pool, season_weight, shortlist)
+                            threshold, limit, drop_pool, hold, flagged, shortlist)
 
     moves, after = search(min_gain, max_adds if adds_left is None else None)
     if adds_left is None or len(moves) <= adds_left:
@@ -509,7 +551,7 @@ def plan_moves(view: LeagueView, base: MatchupProjection, roster: list[PlayerInf
 
 
 def _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster_size, move_days,
-                 min_gain, limit, drop_pool, season_weight, shortlist) -> tuple[list[PlannedMove], MatchupProjection]:
+                 min_gain, limit, drop_pool, hold, flagged, shortlist) -> tuple[list[PlannedMove], MatchupProjection]:
     schedule: list[ScheduledMove] = []
     planned: list[PlannedMove] = []
     current = base
@@ -525,8 +567,9 @@ def _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster
             else:
                 # A player added today can't be today's drop too: he'd never play.
                 droppable = [p for p in active if streamers.get(p.id, -1) < sp]
-                drops = sorted(droppable, key=lambda p: rank.get(p.id, 0.0))[:drop_pool]
-                drops += [p for p in droppable if p.id in streamers and all(p.id != d.id for d in drops)]
+                drops = sorted(droppable, key=lambda p: hold.get(p.id, 0.0))[:drop_pool]
+                drops += [p for p in droppable if (p.id in streamers or p.id in flagged)
+                          and all(p.id != d.id for d in drops)]
             candidates = [fa for fa in free_agents
                           if fa.id not in taken and sp in fa.game_days and fa.availability(day) > 0]
             if len(candidates) > shortlist and drops != [None]:
@@ -534,7 +577,7 @@ def _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster
                 for fa in candidates:
                     trial = [*schedule, ScheduledMove(sp, [fa], [])]
                     after = _reproject(view, base, roster, mine_now, rank, rosters_by_day(roster, trial, base.remaining))
-                    straight_add[fa.id] = matchup_gain(view, current, after) + season_weight * rank[fa.id]
+                    straight_add[fa.id] = matchup_gain(view, current, after) + hold.get(fa.id, 0.0)
                 candidates = sorted(candidates, key=lambda p: straight_add[p.id], reverse=True)[:shortlist]
             best = None
             for fa in candidates:
@@ -542,7 +585,7 @@ def _greedy_plan(view, base, roster, free_agents, mine_now, valuer, rank, roster
                     trial = [*schedule, ScheduledMove(sp, [fa], [drop] if drop else [])]
                     after = _reproject(view, base, roster, mine_now, rank, rosters_by_day(roster, trial, base.remaining))
                     gain = matchup_gain(view, current, after)
-                    score = gain + season_weight * (rank[fa.id] - (rank.get(drop.id, 0.0) if drop else 0.0))
+                    score = gain + hold.get(fa.id, 0.0) - (hold.get(drop.id, 0.0) if drop else 0.0)
                     if gain > min_gain and (best is None or score > best[0]):
                         best = (score, gain, fa, drop, after, trial)
             if best is None:

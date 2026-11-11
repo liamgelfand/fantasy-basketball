@@ -5,20 +5,50 @@ from dataclasses import asdict
 from functools import cached_property
 
 from .analysis import (
+    ASSUMED_OUT_DAYS,
     MatchupProjection,
     MovePlan,
     MoveResult,
     Valuer,
     category_weights,
     daily_starters,
+    expected_games,
     plan_moves,
     project_matchup,
     simulate,
     stat,
 )
-from .espn import LeagueData, PlayerInfo, TeamInfo
+from .espn import AVAILABILITY, LeagueData, PlayerInfo, TeamInfo
+from .projection import ROLE_MIN_DELTA
 
 SHOW_STATS_POINTS = ("FPTS", "PTS", "REB", "AST", "STL", "BLK", "3PM", "TO", "MIN")
+HEALTHY = ("ACTIVE", "", None)
+
+# ---- horizons
+SHORT_DAYS = 14  # "short term": the next two weeks of games
+# Replacement level: the long-term value of the REPLACEMENT_RANK-th best free agent. A player who
+# can't play is worth what you could pick up instead, so missed games pull value toward it.
+REPLACEMENT_RANK = 5
+# Add/drop scoring = this matchup's simulated gain + the change in each player's value beyond it
+# (Engine.hold_value), in matchup units. Value beyond the matchup counts as NEXT_WEIGHT weeks of
+# next-two-weeks value plus ROS_WEIGHT weeks of rest-of-season value. ROS is discounted (the wire
+# refills and projections drift) but still outweighs the next two weeks, which overlap this matchup
+# and are already simulated game by game. Replaces the old flat 0.05 x season-value term.
+NEXT_WEIGHT = 0.25
+ROS_WEIGHT = 0.5
+# One week of a +1 z-sum player in matchup units: ~0.15 expected categories in a 9-cat league;
+# GAMES_PER_WEEK games of one FPTS standard deviation in points leagues.
+CAT_WEEK_UNIT = 0.15
+GAMES_PER_WEEK = 3.5
+# Move labels: a move "helps now" above this matchup gain, and is a long-term upgrade at this much
+# rest-of-season value (z).
+HELPS_NOW_CATS, HELPS_NOW_POINTS = 0.05, 1.0
+LONG_TERM_EDGE = 0.5
+# Drop candidates: the DROP_POOL lowest hold values, plus anyone flagged (long injury, shrinking or
+# small role) up to DROP_POOL_MAX in all.
+DROP_POOL = 4
+DROP_POOL_MAX = 7
+LOW_MINUTES = 18.0
 
 
 class Engine:
@@ -26,6 +56,7 @@ class Engine:
         self.data = data
         self.cfg = data.cfg
         self._position_boards: dict[tuple[str, int], list[dict]] = {}
+        self._horizon_cache: dict[tuple[str, int], float] = {}
 
     # ---------- core pieces ----------
 
@@ -35,11 +66,149 @@ class Engine:
 
     @cached_property
     def rank(self) -> dict[int, float]:
+        """Long-term per-game value (z-sum) by player id."""
         players = self.data.rostered_players + self.data.free_agents()
         return {p.id: self.valuer.total(p) for p in players}
 
+    @cached_property
+    def start_rank(self) -> dict[int, float]:
+        """Near-term per-game value by player id: who starts in the matchup projection."""
+        players = self.data.rostered_players + self.data.free_agents()
+        return {p.id: self.valuer.total(p, stats=p.near_term) for p in players}
+
     def value(self, p: PlayerInfo) -> float:
+        """Stable long-term per-game value (z-sum vs rostered players)."""
         return self.rank.get(p.id) if p.id in self.rank else self.valuer.total(p)
+
+    def near_value(self, p: PlayerInfo) -> float:
+        return self.start_rank.get(p.id) if p.id in self.start_rank else self.valuer.total(p, stats=p.near_term)
+
+    # ---------- horizons ----------
+
+    @cached_property
+    def ros_periods(self) -> list[int]:
+        return self.data.rest_of_season_periods()
+
+    @cached_property
+    def short_periods(self) -> list[int]:
+        return self.ros_periods[:SHORT_DAYS]  # scoring periods are consecutive days
+
+    @cached_property
+    def _today(self):
+        return self.data.sp_date(self.data.today_sp)
+
+    @cached_property
+    def typical_games(self) -> tuple[float, float]:
+        """Median scheduled games over (the next two weeks, the rest of the season) among rostered players."""
+        def median(sps):
+            counts = sorted(len(p.game_days & set(sps)) for p in self.data.rostered_players)
+            return max(1.0, float(counts[len(counts) // 2])) if counts else 1.0
+        return median(self.short_periods), median(self.ros_periods)
+
+    @cached_property
+    def replacement_level(self) -> float:
+        """Long-term value of the REPLACEMENT_RANK-th best free agent who can play now: injured free agents
+        (OUT, IR, suspended) aren't a usable replacement, so they don't set the level."""
+        pool = self.data.free_agents()
+        healthy = [p for p in pool if p.availability(None) > 0] or pool
+        fas = sorted((self.value(p) for p in healthy), reverse=True)
+        if fas:
+            return fas[min(REPLACEMENT_RANK, len(fas)) - 1]
+        return min(self.rank.values(), default=0.0)
+
+    def expected_games(self, p: PlayerInfo, horizon: str = "ros") -> float:
+        """Games `p` should play over the horizon ("short" = next two weeks, "ros"), given injuries."""
+        sps = self.short_periods if horizon == "short" else self.ros_periods
+        return expected_games(p, sps, self.data, self._today)
+
+    def _horizon_value(self, p: PlayerInfo, horizon: str) -> float:
+        key = (horizon, p.id)
+        if key not in self._horizon_cache:
+            short = horizon == "short"
+            per_game = self.near_value(p) if short else self.value(p)
+            typical = self.typical_games[0 if short else 1]
+            r = self.replacement_level
+            self._horizon_cache[key] = round(r + (per_game - r) * self.expected_games(p, horizon) / typical, 2)
+        return self._horizon_cache[key]
+
+    def ros_value(self, p: PlayerInfo) -> float:
+        """Rest-of-season value: long-term per-game value above replacement, scaled by expected games
+        (schedule x injury timeline) relative to a typical player. Out for the season = replacement level."""
+        return self._horizon_value(p, "ros")
+
+    def short_value(self, p: PlayerInfo) -> float:
+        """Next-two-weeks value: near-term per-game value (current role and form) scaled the same way."""
+        return self._horizon_value(p, "short")
+
+    @cached_property
+    def week_unit(self) -> float:
+        return GAMES_PER_WEEK * self.valuer.sd("FPTS") if self.data.is_points else CAT_WEEK_UNIT
+
+    def hold_value(self, p: PlayerInfo) -> float:
+        """Value beyond this matchup, in matchup-gain units: what keeping (or adding) the player is worth."""
+        return self.week_unit * (NEXT_WEIGHT * self.short_value(p) + ROS_WEIGHT * self.ros_value(p))
+
+    def helps_now(self, gain: float) -> bool:
+        return gain > (HELPS_NOW_POINTS if self.data.is_points else HELPS_NOW_CATS)
+
+    def outlook(self, gain: float, ros_delta: float) -> str | None:
+        """"streamer" (helps this matchup only), "stash" (long-term value, little now), "both", or None."""
+        now, later = self.helps_now(gain), ros_delta >= LONG_TERM_EDGE
+        return "both" if now and later else "streamer" if now else "stash" if later else None
+
+    def availability_note(self, p: PlayerInfo) -> str | None:
+        if p.injury_status in HEALTHY:
+            return None
+        sched = len(p.game_days & set(self.short_periods))
+        exp = self.expected_games(p, "short")
+        if p.expected_return:
+            when = f"expected back {p.expected_return:%b %d}"
+        elif AVAILABILITY.get((p.injury_status or "").upper(), 1.0) == 0:
+            when = f"no return date, assuming about {ASSUMED_OUT_DAYS} days out"
+        else:
+            when = "no return date"
+        return f"{p.name} is {p.injury_status} ({when}): about {exp:.0f} of {sched} games in the next 2 weeks."
+
+    def drop_flags(self, p: PlayerInfo) -> list[str]:
+        """Reasons to consider a roster player as a drop beyond raw value: long absence, small or shrinking role."""
+        reasons = []
+        sched = len(p.game_days & set(self.short_periods))
+        if sched and self.expected_games(p, "short") < 0.5 * sched:
+            reasons.append(self.availability_note(p) or f"{p.name} misses most of the next 2 weeks.")
+        minutes = float(p.near_term.get("MIN", 0.0) or 0.0)
+        if p.minutes_trend <= -ROLE_MIN_DELTA:
+            reasons.append(f"{p.name}: {p.projection_note}")
+        elif 0 < minutes < LOW_MINUTES:
+            reasons.append(f"{p.name} is projected for only {minutes:.0f} minutes a game.")
+        return reasons
+
+    def ros_delta(self, add: list[PlayerInfo], drop: list[PlayerInfo]) -> float:
+        """Rest-of-season value change of a move or trade. Roster spots count as replacement level: an extra
+        player in uses a spot a replacement could fill, an extra player out frees one."""
+        out = sum(self.ros_value(p) for p in add) - sum(self.ros_value(p) for p in drop)
+        return out - self.replacement_level * (len(add) - len(drop))
+
+    def move_notes(self, add: list[PlayerInfo], drop: list[PlayerInfo], gain: float) -> list[str]:
+        """Why a move scores the way it does: horizon, role/minutes, injuries, schedule."""
+        ros_delta = self.ros_delta(add, drop)
+        notes = []
+        tag = self.outlook(gain, ros_delta)
+        if tag == "streamer":
+            notes.append(f"Streamer: helps this matchup only ({ros_delta:+.1f} rest-of-season value).")
+        elif tag == "stash":
+            notes.append(f"Stash: long-term value ({ros_delta:+.1f} rest-of-season), low impact this matchup.")
+        elif tag == "both":
+            notes.append(f"Helps this matchup and long term ({ros_delta:+.1f} rest-of-season value).")
+        for p in add + drop:
+            if p.minutes_trend:
+                notes.append(f"{p.name}: {p.projection_note}")
+            if note := self.availability_note(p):
+                notes.append(note)
+        if len(add) == 1 and len(drop) == 1:
+            ga, gd = (len(p.game_days & set(self.short_periods)) for p in (add[0], drop[0]))
+            if abs(ga - gd) >= 2:
+                notes.append(f"Next 2 weeks: {add[0].name} has {ga} games, {drop[0].name} {gd}.")
+        return notes
 
     @cached_property
     def matchup_now(self):
@@ -50,7 +219,7 @@ class Engine:
         opponent, mine_now, theirs_now = self.matchup_now
         elapsed, remaining = self.data.matchup_periods
         return project_matchup(self.data, self.data.my_team.roster, opponent, mine_now, theirs_now,
-                               elapsed, remaining, self.rank)
+                               elapsed, remaining, self.start_rank)
 
     @property
     def remaining(self) -> list[int]:
@@ -75,25 +244,42 @@ class Engine:
     def first_game_day(self, p: PlayerInfo) -> int | None:
         return next((sp for sp in self.move_days if sp in p.game_days), None)
 
-    def simulate(self, add: list[PlayerInfo], drop: list[PlayerInfo], on_sp: int | None = None) -> MoveResult:
-        return simulate(self.data, self.projection, self.data.my_team.roster, add, drop,
-                        self.matchup_now[1], self.valuer, self.rank, self.data.roster_size, on_sp)
+    def simulate(self, add: list[PlayerInfo], drop: list[PlayerInfo], on_sp: int | None = None,
+                 explain: bool = True) -> MoveResult:
+        result = simulate(self.data, self.projection, self.data.my_team.roster, add, drop,
+                          self.matchup_now[1], self.valuer, self.start_rank, self.data.roster_size, on_sp)
+        if explain:
+            result.notes += self.move_notes(add, drop, self.matchup_gain(result))
+        return result
 
     # ---------- roster decisions ----------
 
     @cached_property
     def drop_candidates(self) -> list[PlayerInfo]:
-        """Healthy-or-not, non-IR players ordered by season value (worst first)."""
+        """Non-IR players, worst first by hold value: long-term and next-two-weeks value with injuries
+        and schedule priced in."""
         roster = [p for p in self.data.my_team.roster if not p.is_injured_reserve]
-        return sorted(roster, key=self.value)
+        return sorted(roster, key=self.hold_value)
+
+    @cached_property
+    def drop_pool(self) -> list[PlayerInfo]:
+        """Drops worth trying: the DROP_POOL weakest plus flagged players (long injury, small or shrinking role)."""
+        pool = self.drop_candidates[:DROP_POOL]
+        pool += [p for p in self.drop_candidates[DROP_POOL:] if self.drop_flags(p)]
+        return pool[:DROP_POOL_MAX]
 
     @property
     def has_open_spot(self) -> bool:
         active = [p for p in self.data.my_team.roster if not p.is_injured_reserve]
         return len(active) < self.data.roster_size
 
-    def best_drop_for(self, add: PlayerInfo, candidates: int = 3) -> tuple[PlayerInfo | None, MoveResult]:
-        """Try the weakest few roster players as the drop and keep the swap that helps the matchup most.
+    def move_score(self, result: MoveResult, add: list[PlayerInfo], drop: list[PlayerInfo]) -> float:
+        """Matchup gain plus the change in value beyond this matchup (see NEXT_WEIGHT / ROS_WEIGHT)."""
+        return (self.matchup_gain(result) + sum(self.hold_value(p) for p in add)
+                - sum(self.hold_value(p) for p in drop))
+
+    def best_drop_for(self, add: PlayerInfo) -> tuple[PlayerInfo | None, MoveResult]:
+        """Try each player in drop_pool as the drop and keep the best-scoring swap (move_score).
 
         The move is timed for the add's first game day, so the dropped player keeps any games before it.
         """
@@ -101,25 +287,31 @@ class Engine:
         if self.has_open_spot:
             return None, self.simulate([add], [], on_sp)
         best = None
-        for drop in self.drop_candidates[:candidates]:
-            result = self.simulate([add], [drop], on_sp)
-            score = self.matchup_gain(result) + 0.05 * result.season_value_delta
+        for drop in self.drop_pool:
+            result = self.simulate([add], [drop], on_sp, explain=False)
+            score = self.move_score(result, [add], [drop])
             if best is None or score > best[0]:
                 best = (score, drop, result)
-        return best[1], best[2]
+        _, drop, result = best
+        result.notes += self.move_notes([add], [drop], self.matchup_gain(result))
+        return drop, result
 
     def score_free_agent(self, fa: PlayerInfo) -> dict:
-        """One free agent scored on this-matchup impact (after the best drop) and season value."""
+        """One free agent scored on this-matchup impact (after the best drop) and on both horizons."""
         worst = self.drop_candidates[0] if self.drop_candidates else None
         drop, result = self.best_drop_for(fa)
+        ros_delta = self.ros_delta([fa], [drop] if drop else [])
         return {
             "player": fa,
             "drop": drop,
             "result": result,
             "value": self.value(fa),
-            "value_over_worst": round(self.value(fa) - (self.value(worst) if worst else 0), 2),
+            "ros_value": self.ros_value(fa),
+            "short_value": self.short_value(fa),
+            "value_over_worst": round(self.ros_value(fa) - (self.ros_value(worst) if worst else 0), 2),
+            "outlook": self.outlook(self.matchup_gain(result), ros_delta),
             "games_left": self.games_left(fa),
-            "weighted_value": self.valuer.total(fa, self.weights),
+            "weighted_value": self.valuer.total(fa, self.weights, stats=fa.near_term),
             "add_sp": self.first_game_day(fa),
         }
 
@@ -157,7 +349,8 @@ class Engine:
         return sorted(rows, key=lambda r: self.matchup_gain(r["result"]), reverse=True)[:n]
 
     def top_season_adds(self, n: int = 10) -> list[dict]:
-        return sorted(self.free_agent_board, key=lambda r: r["value"], reverse=True)[:n]
+        """Free agents by rest-of-season value (injury timeline and schedule priced in)."""
+        return sorted(self.free_agent_board, key=lambda r: r["ros_value"], reverse=True)[:n]
 
     @cached_property
     def weekly_adds(self) -> tuple[int | None, int | None, list[str]]:
@@ -200,9 +393,14 @@ class Engine:
             return MovePlan([], proj, proj, self.adds_left, notes=["No active matchup to plan for."])
         # No league limit: still keep it to about one add per day left, each worth making.
         max_adds = max(1, len(self.move_days))
-        plan = plan_moves(self.data, proj, self.data.my_team.roster, self.data.free_agents(), self.matchup_now[1],
-                          self.valuer, self.rank, self.data.roster_size, self.move_days, adds_left=self.adds_left,
-                          min_gain=1.0 if self.data.is_points else 0.05, max_adds=max_adds)
+        roster, fas = self.data.my_team.roster, self.data.free_agents()
+        plan = plan_moves(self.data, proj, roster, fas, self.matchup_now[1], self.valuer, self.start_rank,
+                          self.data.roster_size, self.move_days, adds_left=self.adds_left,
+                          min_gain=HELPS_NOW_POINTS if self.data.is_points else HELPS_NOW_CATS, max_adds=max_adds,
+                          drop_pool=DROP_POOL, hold={p.id: self.hold_value(p) for p in roster + fas},
+                          flagged={p.id for p in self.drop_pool[DROP_POOL:]})
+        for m in plan.moves:
+            m.result.notes += self.move_notes([m.add], [m.drop] if m.drop else [], m.gain)
         if self.data.today_started():
             plan.notes.append("Today's games have tipped, so the plan starts tomorrow.")
         if self.adds_left is None and len(plan.moves) >= max_adds:
@@ -240,7 +438,7 @@ class Engine:
         roster = self.data.my_team.roster
         day = self.data.sp_date(sp)
         healthy = [p for p in roster if p.availability(day) > 0]
-        best = {p.id for p in daily_starters(healthy, sp, self.data.lineup_slots, self.rank)}
+        best = {p.id for p in daily_starters(healthy, sp, self.data.lineup_slots, self.start_rank)}
         starting = [p for p in roster if p.lineup_slot not in ("BE", "IR", "")]
         # Only flag swaps that gain a game: bench players in the best lineup, and the idle starters they replace.
         start = [p.name for p in roster if p.id in best and p.lineup_slot in ("BE", "")]
@@ -270,13 +468,14 @@ class Engine:
             "get": [self.player_summary(p) for p in get],
             "z_change_by_category": {c: round(get_z[c] - give_z[c], 2) for c in cats},
             "total_value_change": round(sum(self.value(p) for p in get) - sum(self.value(p) for p in give), 2),
+            "rest_of_season_value_change": round(self.ros_delta(get, give), 2),
             "weighted_value_change_this_matchup": round(
                 sum(self.valuer.total(p, self.weights) for p in get) - sum(self.valuer.total(p, self.weights) for p in give), 2),
             "per_game_change": {c: round(per_game_sum(get)[c] - per_game_sum(give)[c], 2) for c in cats},
             "ros_games_change": sum(self.ros_games(p) for p in get) - sum(self.ros_games(p) for p in give),
             "roster_count_after": roster_after,
             "roster_spots": self.data.roster_size,
-            "this_matchup": asdict(self.simulate(get, give)) if self.projection.opponent else None,
+            "this_matchup": asdict(self.simulate(get, give, explain=False)) if self.projection.opponent else None,
             "punted_categories": sorted(self.cfg.punt_categories),
         }
 
@@ -298,14 +497,22 @@ class Engine:
             "expected_return": str(p.expected_return) if p.expected_return else None,
             "fantasy_owner": owner.name if owner else "Free agent",
             "value": self.value(p),
+            "value_next_2_weeks": self.short_value(p),
+            "value_rest_of_season": self.ros_value(p),
             "z_scores": self.valuer.z(p),
             "games_left_this_matchup": self.games_left(p),
             "games_rest_of_season": self.ros_games(p),
+            "expected_games_rest_of_season": round(self.expected_games(p), 1),
             "season_gp": p.gp,
             "stat_window": p.window,
+            "projection": p.projection_note,
             "per_game": {k: round(stat(p, k), 3 if "%" in k else 1) for k in self.display_stats()},
         }
         if detail:
+            out["projection_inputs"] = p.projection_weights
+            if p.short_term:
+                out["per_game_next_2_weeks"] = {k: round(float(p.near_term.get(k, 0) or 0), 3 if "%" in k else 1)
+                                                for k in self.display_stats()}
             out["windows"] = {
                 w: {k: round(float(v.get(k, 0) or 0), 3 if "%" in k else 1) for k in self.display_stats() + ["MIN", "GP"]}
                 for w, v in p.windows.items() if v
@@ -355,5 +562,7 @@ class Engine:
             "matchup_projected_change": res.projected_delta,
             "matchup_win_prob_after": res.win_prob_after,
             "value_over_your_worst_player": r["value_over_worst"],
+            "outlook": r["outlook"],
+            "why": res.notes,
             "leverage_weighted_value": r["weighted_value"],
         }

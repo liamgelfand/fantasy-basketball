@@ -112,7 +112,10 @@ class FantasyAgent:
 
     def _build_tools(self) -> tuple[list[dict], dict[str, Callable[..., object]]]:
         e, d = self.engine, self.data
-        window_desc = "Stats window: blend (season blended with projection early in the year), season, last_30, last_15, last_7, projected."
+        window_desc = ("Stats window: model (default: season stats with a light preseason prior, following real "
+                       "minutes/role changes but not shooting streaks), blend, season, last_30, last_15, last_7, "
+                       "projected. value = long-term per-game z value; value_next_2_weeks and value_rest_of_season "
+                       "also price in schedule and injury timelines.")
 
         def league_overview():
             return {
@@ -132,7 +135,8 @@ class FantasyAgent:
             return {
                 "team": e.team_summary(d.my_team),
                 "lineup_check_today": e.lineup_check(),
-                "weakest_spots": [p.name for p in e.drop_candidates[:4]],
+                "weakest_spots": [{"name": p.name, "rest_of_season_value": e.ros_value(p), "flags": e.drop_flags(p)}
+                                  for p in e.drop_pool],
             }
 
         def matchup_projection():
@@ -146,7 +150,7 @@ class FantasyAgent:
         def free_agents(position: str | None = None, limit: int = 15, sort: str = "matchup"):
             rows = e.free_agents_at(position.upper(), size=max(limit * 2, 30)) if position else e.free_agent_board
             matchup = lambda r: e.matchup_gain(r["result"])
-            key = {"matchup": matchup, "season": lambda r: r["value"],
+            key = {"matchup": matchup, "season": lambda r: r["ros_value"],
                    "weighted": lambda r: r["weighted_value"]}.get(sort, matchup)
             return [e.fa_row(r) for r in sorted(rows, key=key, reverse=True)[:limit]]
 
@@ -205,14 +209,14 @@ class FantasyAgent:
             {"name": "my_roster", "description": f"My roster with per-game stats, z-score values, injury status, games left this matchup and rest of season, plus a check of today's lineup. {window_desc}", "input_schema": schema()},
             {"name": "matchup_projection", "description": "Current matchup: live category totals, lineup-aware projected finals, per-category win probabilities, and a day-by-day plan of starts, open slots and benched games for both teams.", "input_schema": schema()},
             {"name": "team_roster", "description": "Another fantasy team's roster and record. Accepts team name, abbreviation, or id.", "input_schema": schema({"team": {"type": "string"}}, ["team"])},
-            {"name": "free_agents", "description": "Free agents ranked by sort='matchup' (this matchup's gain after the best drop: projected fantasy points in points leagues, expected categories in category leagues), 'season' (rest-of-season z value), or 'weighted' (value weighted toward swing categories). Optional position filter: PG, SG, SF, PF, C, G, F.",
+            {"name": "free_agents", "description": "Free agents ranked by sort='matchup' (this matchup's gain after the best drop: projected fantasy points in points leagues, expected categories in category leagues), 'season' (rest-of-season value: per-game z value scaled by expected games left, so long injuries count), or 'weighted' (near-term value weighted toward swing categories). Each row has an outlook (streamer = helps this matchup only, stash = long-term value with little impact now, both) and 'why' notes: role/minutes trend, injury timeline, schedule. Optional position filter: PG, SG, SF, PF, C, G, F.",
              "input_schema": schema({"position": {"type": "string"}, "limit": {"type": "integer"},
                                      "sort": {"type": "string", "enum": ["matchup", "season", "weighted"]}})},
-            {"name": "player_details", "description": "One player in depth: every stats window (season, last 30/15/7, projected), upcoming game dates, owner, and recent ESPN news.",
+            {"name": "player_details", "description": "One player in depth: every stats window (season, last 30/15/7, projected, plus the model's long-term and next-2-weeks projections and the share of each input window), what drove the projection, upcoming game dates, owner, and recent ESPN news.",
              "input_schema": schema({"name": {"type": "string"}, "include_news": {"type": "boolean"}}, ["name"])},
-            {"name": "simulate_moves", "description": "Re-project the current matchup after adding and/or dropping players. Returns expected categories won and win probability before and after, per-category changes, and rest-of-season value change.",
+            {"name": "simulate_moves", "description": "Re-project the current matchup after adding and/or dropping players. Returns expected categories won and win probability before and after, per-category changes, rest-of-season value change, and notes on whether it's a streamer or a long-term move and why (minutes trend, injury timeline, schedule).",
              "input_schema": schema({"add": names, "drop": names})},
-            {"name": "move_plan", "description": "Dated add/drop sequence for the rest of the matchup, built day by day: today's moves first (e.g. a free agent who plays today filling an empty lineup slot, no drop needed if a roster spot is open), then each later day's best move on the roster left by the earlier ones. Respects the league's weekly add limit, counting this week's adds from ESPN's activity feed. Today is skipped once its games have tipped.",
+            {"name": "move_plan", "description": "Dated add/drop sequence for the rest of the matchup, built day by day: today's moves first (e.g. a free agent who plays today filling an empty lineup slot, no drop needed if a roster spot is open), then each later day's best move on the roster left by the earlier ones. Moves are scored on this matchup's gain plus the change in next-two-weeks and rest-of-season value; drops considered include long-injured and shrinking-role players. Respects the league's weekly add limit, counting this week's adds from ESPN's activity feed. Today is skipped once its games have tipped.",
              "input_schema": schema()},
             {"name": "evaluate_trade", "description": "Evaluate a trade from my side: per-category z-score and per-game changes, rest-of-season games, and the effect on this matchup.",
              "input_schema": schema({"give": names, "receive": names}, ["give", "receive"])},

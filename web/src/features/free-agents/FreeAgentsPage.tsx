@@ -15,6 +15,21 @@ import { MovePlanCard } from './MovePlanCard'
 
 const POSITIONS = ['All', 'PG', 'SG', 'SF', 'PF', 'C', 'G', 'F'] as const
 const MEDALS = ['🥇', '🥈', '🥉']
+const OUTLOOKS: Record<NonNullable<FreeAgentRow['outlook']>, { label: string; color: string; hint: string }> = {
+  streamer: { label: 'Streamer', color: 'orange', hint: 'Helps this matchup only' },
+  stash: { label: 'Stash', color: 'grape', hint: 'Long-term value, low impact this matchup' },
+  both: { label: 'Now + later', color: 'teal', hint: 'Helps this matchup and long term' },
+}
+
+function OutlookBadge({ row }: { row: FreeAgentRow }) {
+  if (!row.outlook) return null
+  const o = OUTLOOKS[row.outlook]
+  return (
+    <Badge variant="light" color={o.color} title={[o.hint, ...row.notes].join(' ')}>
+      {o.label}
+    </Badge>
+  )
+}
 
 export function FreeAgentsPage() {
   const [position, setPosition] = useState<(typeof POSITIONS)[number]>('All')
@@ -83,7 +98,14 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
         sortValue: (r) => r.add_date ?? '',
         render: (r) => (r.add_date ? shortDate(r.add_date) : '-'),
       },
+      {
+        key: 'outlook',
+        label: 'Horizon',
+        sortValue: (r) => r.outlook ?? '',
+        render: (r) => <OutlookBadge row={r} />,
+      },
       valueColumn(),
+      numberColumn('ros_value', 'ROS value', (r) => r.ros_value, 1),
       numberColumn('games_left', 'G left', (r) => r.games_left),
       numberColumn('fpts', 'FPTS/g', (r) => r.fpts, 1),
       numberColumn('min', 'MIN', (r) => r.minutes, 1),
@@ -139,6 +161,7 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
                 <PlayerLink id={r.id}>{r.name}</PlayerLink>
               </Title>
               <StatusBadge status={r.status} />
+              <OutlookBadge row={r} />
             </Group>
             <Text size="sm" c="dimmed">
               {r.pro_team} · {r.positions.join('/')} · {r.games_left} games left
@@ -193,8 +216,8 @@ function BoardView({ board, isPoints }: { board: FreeAgentBoard; isPoints: boole
       </Paper>
       {board.rows.some((r) => r.low_sample) && (
         <Text size="xs" c="dimmed">
-          <IconAlertCircle size={12} color="var(--mantine-color-yellow-6)" /> Under 5 games played: rankings lean on
-          ESPN's projection. Check their minutes before trusting them.
+          <IconAlertCircle size={12} color="var(--mantine-color-yellow-6)" /> Under 5 games played: rankings still
+          lean partly on ESPN's preseason projection. Check their minutes before trusting them.
         </Text>
       )}
     </Stack>
