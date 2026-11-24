@@ -4,7 +4,7 @@ import random
 from types import SimpleNamespace
 
 from fbb.config import Config
-from fbb.espn import Category, PlayerInfo, TeamInfo, count_adds
+from fbb.espn import Category, PlayerInfo, TeamInfo, count_adds, matchup_adds_from_counter
 
 CATS = [Category(s, s == "TO") for s in ("PTS", "REB", "AST", "STL", "BLK", "3PM", "FG%", "FT%", "TO")]
 SLOTS = ["PG", "SG", "SF", "PF", "C", "G", "F", "UT", "UT", "UT"]
@@ -65,6 +65,10 @@ class FakeData:
             activity(dt.datetime(2026, 10, 23, 20), 1, "FA ADDED"),  # last matchup
         ]
         self.activity_error: Exception | None = None
+        # ESPN's raw per-matchup acquisition counter for my team (matchup period id -> adds); agrees with the feed.
+        self.matchup_period = 3
+        self.matchup_acquisition_totals: dict | None = {"2": 2, "3": 1}
+        self.counter_error: Exception | None = None
 
     my_team = property(lambda self: self.teams[1])
     rostered_players = property(lambda self: [p for t in self.teams.values() for p in t.roster])
@@ -103,6 +107,13 @@ class FakeData:
 
     def standings(self):
         return list(self.teams.values())
+
+    def adds_counter_this_matchup(self):
+        if self.counter_error:
+            raise self.counter_error
+        counter = {} if self.matchup_acquisition_totals is None else {"matchupAcquisitionTotals": self.matchup_acquisition_totals}
+        teams_raw = [{"id": tid, "transactionCounter": counter if tid == self.my_team_id else {}} for tid in self.teams]
+        return matchup_adds_from_counter(teams_raw, self.my_team_id, self.matchup_period)
 
     def adds_used_this_matchup(self):
         if self.activity_error:

@@ -46,11 +46,19 @@ ACTIVITY_PAGE = 50
 ACTIVITY_MAX_PAGES = 20
 
 
-def count_adds(activities, team_id: int, since: dt.datetime) -> tuple[int, bool]:
+def _activity_key(act) -> tuple:
+    """Identity of one feed entry, so an entry repeated across pages is counted once."""
+    return act.date, tuple((getattr(team, "team_id", team), action, getattr(player, "name", player))
+                           for team, action, player, _pos in act.actions)
+
+
+def count_adds(activities, team_id: int, since: dt.datetime, seen: set | None = None) -> tuple[int, bool]:
     """Adds by `team_id` in espn_api Activity objects dated at or after `since` (naive local time).
 
     Returns (adds, reached_older): `reached_older` is True once an entry predates `since`, so a
-    newest-first feed needs no further pages. Teams are matched by id: names aren't unique or stable.
+    newest-first feed needs no further pages. Teams are matched by id: names aren't unique or stable,
+    and espn_api may hand back a bare id instead of a Team. Entries already in `seen` are skipped
+    (new activity shifts the feed while paging); counted entries are added to it.
     """
     since_ms = since.timestamp() * 1000  # naive datetime -> local time, same as the ms epoch in act.date
     adds, older = 0, False
@@ -58,9 +66,32 @@ def count_adds(activities, team_id: int, since: dt.datetime) -> tuple[int, bool]
         if act.date < since_ms:
             older = True
             continue
+        if seen is not None:
+            key = _activity_key(act)
+            if key in seen:
+                continue
+            seen.add(key)
         adds += sum(1 for team, action, _player, _pos in act.actions
-                    if action in ADD_ACTIONS and getattr(team, "team_id", None) == team_id)
+                    if action in ADD_ACTIONS and getattr(team, "team_id", team) == team_id)
     return adds, older
+
+
+def matchup_adds_from_counter(teams_raw, team_id: int, matchup_period) -> int | None:
+    """Adds `team_id` made in `matchup_period`, from ESPN's raw mTeam payload.
+
+    ESPN keeps team["transactionCounter"]["matchupAcquisitionTotals"] = {"<matchup period id>": adds},
+    the same counter it enforces the per-matchup limit with. None when the team, the counter or this
+    matchup's entry is missing or not a number, so the caller can fall back to the activity feed.
+    """
+    team = next((t for t in teams_raw or [] if isinstance(t, dict) and t.get("id") == team_id), None)
+    counter = (team or {}).get("transactionCounter")
+    totals = counter.get("matchupAcquisitionTotals") if isinstance(counter, dict) else None
+    if not isinstance(totals, dict) or matchup_period is None:
+        return None
+    value = totals.get(str(matchup_period))
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return int(value)
 
 
 @dataclass
@@ -286,23 +317,34 @@ class LeagueData:
         first = self.sp_date(first_sp)
         return dt.datetime.combine(first, dt.time()) if first else None
 
+    def adds_counter_this_matchup(self) -> int | None:
+        """My adds this matchup from ESPN's per-matchup acquisition counter (raw mTeam view).
+
+        espn_api's Team doesn't expose it, so this reads the raw payload. None when it's missing.
+        """
+        raw = self.league.espn_request.league_get(params={"view": "mTeam"})
+        return matchup_adds_from_counter((raw or {}).get("teams"), self.my_team_id, self.league.currentMatchupPeriod)
+
     def adds_used_this_matchup(self) -> int:
         """My FA adds and waiver claims since the matchup started, read from the league activity feed.
 
-        Pages the newest-first feed until an entry predates the matchup start. Raises if the start
-        is unknown or the feed is longer than ACTIVITY_MAX_PAGES pages, rather than undercounting.
+        Pages the newest-first feed until an entry predates the matchup start or a page comes back
+        empty. ESPN may return fewer entries than asked for, so the next offset follows what came back
+        rather than the page size. Raises if the start is unknown or the feed runs past
+        ACTIVITY_MAX_PAGES pages, rather than undercounting.
         """
         since = self.matchup_start
         if since is None:
             raise ValueError("no current matchup")
-        used = 0
-        for page in range(ACTIVITY_MAX_PAGES):
-            acts = self.league.recent_activity(size=ACTIVITY_PAGE, offset=page * ACTIVITY_PAGE)
-            n, done = count_adds(acts, self.my_team_id, since)
+        used, offset, seen = 0, 0, set()
+        for _ in range(ACTIVITY_MAX_PAGES):
+            acts = self.league.recent_activity(size=ACTIVITY_PAGE, offset=offset)
+            n, done = count_adds(acts, self.my_team_id, since, seen)
             used += n
-            if done or len(acts) < ACTIVITY_PAGE:
+            if done or not acts:
                 return used
-        raise RuntimeError(f"activity feed has more than {ACTIVITY_PAGE * ACTIVITY_MAX_PAGES} entries this matchup")
+            offset += len(acts)
+        raise RuntimeError(f"activity feed has more than {ACTIVITY_MAX_PAGES} pages this matchup")
 
     def rest_of_season_periods(self) -> list[int]:
         start = self.today_sp + (1 if self.today_started() else 0)
