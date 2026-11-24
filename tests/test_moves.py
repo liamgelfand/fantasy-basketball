@@ -63,6 +63,44 @@ def test_counts_only_my_adds_this_matchup():
     assert summary["adds_left_this_week"] == 3
 
 
+def test_counter_is_the_primary_source():
+    data = streaming_league()
+    data.activity_error = RuntimeError("feed down")  # not needed when the counter is there
+    data.matchup_acquisition_totals = {"2": 4, "3": 2}
+    engine = Engine(data)
+    assert engine.weekly_adds == (4, 2, []) and engine.adds_left == 2
+
+
+def test_missing_counter_falls_back_to_the_feed_with_a_note():
+    for totals in (None, {}):
+        data = streaming_league()
+        data.matchup_acquisition_totals = totals
+        limit, used, notes = Engine(data).weekly_adds
+        assert (limit, used) == (4, 1)
+        assert len(notes) == 1 and "activity feed" in notes[0] and "counter wasn't available" in notes[0]
+
+    data = streaming_league()
+    data.counter_error = KeyError("transactionCounter")
+    assert Engine(data).weekly_adds[1] == 1 and "activity feed" in Engine(data).weekly_adds[2][0]
+
+
+def test_counter_for_another_matchup_is_ignored():
+    data = streaming_league()
+    data.matchup_acquisition_totals = {"2": 4}  # last matchup only
+    limit, used, notes = Engine(data).weekly_adds
+    assert used == 1 and "counter wasn't available" in notes[0]
+
+
+def test_counter_and_feed_disagree_trusts_the_counter():
+    data = streaming_league()
+    data.matchup_acquisition_totals = {"3": 3}  # the feed shows 1
+    engine = Engine(data)
+    limit, used, notes = engine.weekly_adds
+    assert used == 3 and engine.adds_left == 1
+    assert notes == ["ESPN's add counter shows 3 adds this week but the activity feed shows 1; using the counter."]
+    assert notes[0] in engine.move_plan.notes
+
+
 def test_weekly_cap_limits_the_sequence():
     data = streaming_league()
     data.acquisition_rules = {"matchup_acquisition_limit": 2}
@@ -74,6 +112,7 @@ def test_weekly_cap_limits_the_sequence():
 
     data = streaming_league()
     data.activity += [activity(dt.datetime(2026, 10, 25, 9 + h), 1, "FA ADDED") for h in range(5)]
+    data.matchup_acquisition_totals = {"3": 6}
     engine, plan = plan_of(data)
     assert engine.weekly_adds[1] == 6 and engine.adds_left == 0  # never negative
     assert plan.moves == [] and plan.capped
@@ -90,7 +129,7 @@ def test_no_league_limit_is_uncapped():
     for limit in (None, 0, -1):
         data = streaming_league()
         data.acquisition_rules = {"matchup_acquisition_limit": limit}
-        data.activity_error = AssertionError("no limit: the feed isn't needed")
+        data.activity_error = data.counter_error = AssertionError("no limit: no count needed")
         engine, plan = plan_of(data)
         assert engine.adds_left is None and engine.weekly_adds == (None, None, [])
         assert len(plan.moves) == 2 and not plan.capped
@@ -100,6 +139,7 @@ def test_activity_failure_leaves_plan_uncapped_with_a_note():
     data = streaming_league()
     data.acquisition_rules = {"matchup_acquisition_limit": 1}
     data.activity_error = RuntimeError("401")
+    data.counter_error = RuntimeError("401")
     engine, plan = plan_of(data)
     assert engine.adds_left is None and plan.adds_left is None
     assert len(plan.moves) == 2 and not plan.capped
@@ -136,16 +176,28 @@ def test_no_same_day_add_then_drop_and_no_limit_stays_short():
         added_on[m.add.id] = m.sp
 
 
-def stub_league_data(pages: list[list], start: dt.date, sp_start: dict | None = None) -> tuple[LeagueData, list[int]]:
-    """A LeagueData over a stub espn_api League whose recent_activity serves `pages`."""
+def stub_league_data(pages: list[list], start: dt.date, sp_start: dict | None = None,
+                     teams_raw: list | None = None) -> tuple[LeagueData, list[int]]:
+    """A LeagueData over a stub espn_api League whose recent_activity serves `pages` back to back
+    and whose raw mTeam view returns `teams_raw`."""
     offsets = []
+    feed = [act for page in pages for act in page]
+    page_sizes = [len(page) for page in pages]
 
     def recent_activity(size=25, msg_type=None, offset=0, include_moved=False):
         offsets.append(offset)
-        return pages[offset // size] if offset // size < len(pages) else []
+        # Serve the page starting at `offset`, capped like ESPN: at most `size`, as cut in `pages`.
+        ends = [sum(page_sizes[:i + 1]) for i in range(len(page_sizes))]
+        end = next((e for e in ends if e > offset), offset)
+        return feed[offset:min(end, offset + size)]
+
+    def league_get(params=None, headers=None, extend=""):
+        assert params == {"view": "mTeam"}
+        return {"teams": teams_raw or []}
 
     data = LeagueData.__new__(LeagueData)
-    data.league = SimpleNamespace(recent_activity=recent_activity)
+    data.league = SimpleNamespace(recent_activity=recent_activity, currentMatchupPeriod=5,
+                                  espn_request=SimpleNamespace(league_get=league_get))
     data.my_team_id = 1
     data.today_sp = 10
     data.sp_start = sp_start or {10: dt.datetime.combine(start, dt.time(19))}
@@ -185,7 +237,47 @@ def test_adds_after_previous_days_tip_count_toward_this_matchup():
 
 def test_espn_counting_stops_at_end_of_feed():
     data, offsets = stub_league_data([[activity(dt.datetime(2026, 11, 3), 1, "FA ADDED")]], dt.date(2026, 11, 2))
-    assert data.adds_used_this_matchup() == 1 and offsets == [0]
+    assert data.adds_used_this_matchup() == 1 and offsets == [0, 1]
+
+
+def test_espn_counting_survives_short_pages_and_repeats():
+    """ESPN can return fewer entries than asked for, and new activity shifts entries onto the next page."""
+    this_week = dt.datetime(2026, 11, 4, 12)
+    repeated = activity(dt.datetime(2026, 11, 3, 9), 1, "FA ADDED", "Repeat")
+    pages = [
+        [activity(this_week, 1, "FA ADDED", "A"), repeated],  # a short page: not the end of the feed
+        [repeated, activity(dt.datetime(2026, 11, 3, 8), 1, "WAIVER ADDED", "B")],
+        [activity(dt.datetime(2026, 10, 30), 1, "FA ADDED", "Old")],
+    ]
+    data, offsets = stub_league_data(pages, dt.date(2026, 11, 2))
+    assert data.adds_used_this_matchup() == 3
+    assert offsets == [0, 2, 4]
+
+
+def test_count_adds_matches_bare_team_ids_and_skips_unknown_teams():
+    from fbb.espn import count_adds
+
+    act = SimpleNamespace(date=int(dt.datetime(2026, 11, 3).timestamp() * 1000),
+                          actions=[(1, "FA ADDED", "P1", ""), (None, "FA ADDED", "P2", ""), ("", "DROPPED", "P3", "")])
+    assert count_adds([act], 1, dt.datetime(2026, 11, 2)) == (1, False)
+
+
+def test_espn_counter_reads_this_matchups_entry():
+    team = {"id": 1, "transactionCounter": {"acquisitions": 9, "matchupAcquisitionTotals": {"4": 3, "5": 2}}}
+    data, offsets = stub_league_data([], dt.date(2026, 11, 2), teams_raw=[{"id": 2}, team])
+    assert data.adds_counter_this_matchup() == 2 and offsets == []
+
+
+def test_espn_counter_missing_or_other_matchup_is_none():
+    from fbb.espn import matchup_adds_from_counter
+
+    assert matchup_adds_from_counter([{"id": 1, "transactionCounter": {"matchupAcquisitionTotals": {"4": 3}}}], 1, 5) is None
+    assert matchup_adds_from_counter([{"id": 1, "transactionCounter": {"acquisitions": 3}}], 1, 5) is None
+    assert matchup_adds_from_counter([{"id": 1}], 1, 5) is None
+    assert matchup_adds_from_counter([{"id": 2, "transactionCounter": {"matchupAcquisitionTotals": {"5": 1}}}], 1, 5) is None
+    assert matchup_adds_from_counter(None, 1, 5) is None
+    assert matchup_adds_from_counter([{"id": 1, "transactionCounter": {"matchupAcquisitionTotals": {"5": "x"}}}], 1, 5) is None
+    assert matchup_adds_from_counter([{"id": 1, "transactionCounter": {"matchupAcquisitionTotals": {"5": 0}}}], 1, 5) == 0
 
 
 def test_free_agent_board_times_the_add():

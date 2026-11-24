@@ -356,8 +356,10 @@ class Engine:
     def weekly_adds(self) -> tuple[int | None, int | None, list[str]]:
         """(league add limit per matchup, adds I've used this matchup, notes), read from ESPN once per snapshot.
 
+        The count comes from ESPN's per-matchup acquisition counter, the one ESPN enforces the limit
+        with; the activity feed is the fallback when the counter is missing, and a cross-check otherwise.
         The limit is None when the league has none (ESPN reports 0, -1 or nothing); the count is None
-        when there's no limit to count against or the activity feed couldn't be read.
+        when there's no limit to count against or neither source could be read.
         """
         try:
             limit = self.data.acquisition_rules.get("matchup_acquisition_limit")
@@ -366,14 +368,30 @@ class Engine:
         if not isinstance(limit, int) or limit <= 0:
             return None, None, []
         try:
-            used = self.data.adds_used_this_matchup()
+            counter = self.data.adds_counter_this_matchup()
+        except Exception:
+            counter = None
+        try:
+            feed = self.data.adds_used_this_matchup()
         except Exception as e:
-            return limit, None, [f"Your league allows {limit} adds per matchup, but this week's adds couldn't be "
-                                 f"read from ESPN ({type(e).__name__}), so the plan isn't capped. Check your "
-                                 "adds left before making them."]
+            if counter is None:
+                return limit, None, [f"Your league allows {limit} adds per matchup, but this week's adds couldn't be "
+                                     f"read from ESPN ({type(e).__name__}), so the plan isn't capped. Check your "
+                                     "adds left before making them."]
+            feed = None
         notes = []
+        if counter is not None:
+            used = counter
+            if feed is not None and feed != counter:
+                notes.append(f"ESPN's add counter shows {counter} adds this week but the activity feed shows "
+                             f"{feed}; using the counter.")
+        else:
+            used = feed
+            notes.append("ESPN's per-matchup add counter wasn't available, so this week's adds are counted "
+                         "from the league activity feed.")
         if used > self.data.my_team.acquisitions:  # season total from ESPN's transaction counter
-            notes.append(f"ESPN's activity feed shows {used} adds this week but only "
+            source = "add counter" if counter is not None else "activity feed"
+            notes.append(f"ESPN's {source} shows {used} adds this week but only "
                          f"{self.data.my_team.acquisitions} this season; the weekly count may be off.")
         return limit, used, notes
 

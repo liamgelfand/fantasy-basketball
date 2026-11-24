@@ -213,7 +213,7 @@ class MovePlanOut(BaseModel):
     win_prob_before: float
     win_prob_after: float
     weekly_add_limit: int | None = Field(description="League add limit per matchup; null when there is none")
-    adds_used_this_week: int | None = Field(description="My adds this matchup from ESPN's activity feed; null when not read")
+    adds_used_this_week: int | None = Field(description="My adds this matchup from ESPN's counter (feed fallback); null when not read")
     adds_left: int | None = Field(description="weekly_add_limit - adds_used_this_week; null when either is unknown")
     capped: bool
     notes: list[str]

@@ -27,11 +27,16 @@ function PlanView({ plan, isPoints }: { plan: MovePlan; isPoints: boolean }) {
       <Group justify="space-between" mb="xs" wrap="wrap">
         <Title order={4}>Add/drop plan by day</Title>
         <Group gap="xs">
-          {plan.weekly_add_limit !== null && plan.adds_used_this_week !== null && (
-            <Badge variant="light" color={plan.capped ? 'orange' : 'gray'}>
-              {plan.adds_used_this_week} of {plan.weekly_add_limit} adds used this week
-            </Badge>
-          )}
+          {plan.weekly_add_limit !== null &&
+            (plan.adds_used_this_week !== null ? (
+              <Badge variant="light" color={plan.capped ? 'orange' : 'gray'}>
+                {plan.adds_used_this_week} of {plan.weekly_add_limit} adds used this week
+              </Badge>
+            ) : (
+              <Badge variant="light" color="yellow">
+                Limit {plan.weekly_add_limit} adds/week · couldn't read adds used
+              </Badge>
+            ))}
           {plan.moves.length > 0 && (
             <Badge variant="light" color="teal">
               {signed(plan.total_gain, digits)} · {pct(plan.win_prob_before)} → {pct(plan.win_prob_after)} to win
